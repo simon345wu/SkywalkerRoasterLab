@@ -76,3 +76,6 @@ nbproject
 .gcc-flags.json
 .ccls
 
+# Android app builds (too large for git; distribute via releases instead)
+*.apk
+
