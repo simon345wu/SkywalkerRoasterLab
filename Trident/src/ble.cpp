@@ -55,14 +55,14 @@ void notifyBLEClient(const String &message);
 // BLE Server Callbacks
 // -----------------------------------------------------------------------------
 class MyServerCallbacks : public BLEServerCallbacks {
-  void onConnect(BLEServer *pServer, esp_ble_gatts_cb_param_t *param) override {
+  void onConnect(BLEServer *pServer, ble_gap_conn_desc *desc) override {
     deviceConnected = true;
 
     // Change BLE connection parameters per apple ble guidelines
     // (for this client, min interval 15ms (/1.25), max 30ms (/1.25), latency 4
     // frames, timeout 5sec(/10ms)
     // https://docs.silabs.com/bluetooth/4.0/bluetooth-miscellaneous-mobile/selecting-suitable-connection-parameters-for-apple-devices
-    pServer->updateConnParams(param->connect.remote_bda, 12, 24, 4, 500);
+    pServer->updateConnParams(desc->conn_handle, 12, 24, 4, 500);
 
     D_println("BLE: Client connected.");
   }
