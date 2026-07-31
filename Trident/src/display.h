@@ -1,11 +1,14 @@
 #pragma once
 #include <Arduino.h>
 
-#define EXAMPLE_PIN_NUM_MISO           5
-#define EXAMPLE_PIN_NUM_MOSI           6
-#define EXAMPLE_PIN_NUM_SCLK           7
-#define EXAMPLE_PIN_NUM_LCD_CS         14
-#define EXAMPLE_PIN_NUM_LCD_DC         15
+// Goouuu ESP32-S3 expansion board + 2.8" ILI9341 TFT (pins confirmed working
+// on real hardware)
+#define TFT_MISO  46
+#define TFT_MOSI  45
+#define TFT_SCLK  3
+#define TFT_CS    14
+#define TFT_DC    47
+#define TFT_RST   21
 
 void displayInit();
 
