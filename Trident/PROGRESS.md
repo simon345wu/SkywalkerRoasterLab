@@ -56,7 +56,11 @@
   3. Tried clearing just a bounding rect (`fillRect`) before redrawing — fixed the overlap but the clear-then-redraw was still visibly flickering.
   4. Final fix: render into an off-screen `GFXcanvas1` (1bpp, ~3.2KB RAM) each update, then `tft.drawBitmap(...)` it to the panel in one shot. No intermediate blank frame is ever shown on the physical screen. **This is the version that's committed and confirmed flicker-free on hardware.**
 
+### Possible upstream bug found while explaining the code (not fixed yet)
+- [state_request_queue.cpp](src/state_request_queue.cpp): [model.h:6](src/model.h#L6) comments the source priority as "BLE=0, WS=1, USB=2", implying BLE should win conflicts. But both `enqueueStateRequest`'s eviction logic and `processStateQueue`'s selection logic (`stateQueue[i].source > highestPriority`) pick the **largest** raw enum value — so in practice **USB(2) beats WebSocket(1) beats BLE(0)**, the opposite of what the comment says. This is upstream code (predates today's session, part of the original fork), not something introduced this session. Since this repo was forked from elsewhere, worth checking whether upstream intended BLE to win and the comparison operators are backwards, or the comment is just stale — haven't fixed it, just flagging it.
+
 ### Open items / next steps
+- Decide whether to fix the priority-order bug above (flip the comparison, or fix the comment/enum values — need to confirm intended behavior first).
 - MAX31855 thermocouple (K-type) — deferred, not started. Was going to share the SPI bus with the display (SCK=3, MISO=46) using a new CS pin.
 - Test USB and WiFi paths through the real Artisan app (not just raw protocol pokes).
 - Test against the actual Skywalker roaster hardware (TX/RX pins) — only tested on a bare ESP32-S3 dev board so far.
