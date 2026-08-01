@@ -3,12 +3,13 @@
 #ifndef TRIDENT_MODEL
 #define TRIDENT_MODEL
 
-#define PRIORITY_LEVELS 3 // BLE=0, WS=1, USB=2
+#define PRIORITY_LEVELS 4 // BLE=0, WS=1, USB=2, TOUCH=3
 
 typedef enum {
   SOURCE_BLE = 0,
   SOURCE_WEBSOCKET = 1,
-  SOURCE_USB = 2
+  SOURCE_USB = 2,
+  SOURCE_TOUCH = 3
 } StateSourceT;
 
 typedef struct {

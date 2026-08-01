@@ -15,12 +15,14 @@
 #include "model.h"
 #include "pindef.h"
 #include "state_request_queue.h"
+#include "touch.h"
 #include "wifi_setup.h"
 
 // -----------------------------------------------------------------------------
 // Global Bean Temperature Variable
 // -----------------------------------------------------------------------------
 double temp = 0.0; // Filtered temperature
+double ror = 0.0;  // Rate of rise, degrees/min
 
 // -----------------------------------------------------------------------------
 // Define PID variables
@@ -51,6 +53,8 @@ bool isOn = false;
 BloodhoundStateT m_state = booting;
 void webSerialLoop(void *params);
 void ledControl();
+extern bool deviceConnected;
+unsigned long lastUsbActivityTime = 0; // marker for USB status display
 
 void setup() {
   Serial.begin(115200);
@@ -73,6 +77,7 @@ void setup() {
   xTaskCreate(webSerialLoop, "WebSerialTask", configMINIMAL_STACK_SIZE + 2048,
               NULL, 1, NULL);
   displayInit();
+  touchInit();
   myPID.SetOutputLimits(0, 95);
   delay(5000);
   initBLE("Trident", "1.0.2", "Skywalker-Trident");
@@ -103,6 +108,7 @@ void serialLoop() {
   if (Serial.available() <= 0) {
     return;
   }
+  lastUsbActivityTime = millis();
   String command = Serial.readStringUntil('\n');
   command.trim();
   CommandTypeT type = classifyCommandType(command);
@@ -122,11 +128,15 @@ void serialLoop() {
 
 void webSerialLoop(void *params) {
   while (1) {
-    String readMsg = String("Status:\n") + "0," + String(temp, 1) + "," +
-                     String(temp, 1) + "," + String(sendBuffer[HEAT_BYTE]) +
-                     "," + String(sendBuffer[VENT_BYTE]) + "\n" +
-                     String("Wifi: ") + WiFi.localIP().toString();
-    displayMessage(readMsg.c_str());
+    String wifiStatus = (WiFi.getMode() == WIFI_AP)
+                             ? "AP"
+                             : (WiFi.status() == WL_CONNECTED ? "STA" : "--");
+    String bleStatus = deviceConnected ? "OK" : "--";
+    String usbStatus =
+        (millis() - lastUsbActivityTime < 5000) ? "OK" : "--";
+    displayDashboard(temp, ror, sendBuffer[HEAT_BYTE], sendBuffer[VENT_BYTE],
+                      sendBuffer[DRUM_BYTE] != 0, wifiStatus.c_str(),
+                      bleStatus.c_str(), usbStatus.c_str());
     WebSerial.loop();
     delay(250);
     ledControl();
@@ -151,6 +161,8 @@ void loop() {
     getRoasterMessage();
   }
 
+  touchLoop();
+
   processStateQueue();
   // Ensure PID or manual heat control is handled
   handlePIDControl();
@@ -162,7 +174,6 @@ void loop() {
 
 unsigned long LED_LAST_ON_MS = 0;
 const unsigned long LED_FLASH_DELAY_MS = 2000;
-extern bool deviceConnected;
 
 void ledControl() {
   int now = millis();

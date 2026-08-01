@@ -43,7 +43,14 @@ unsigned long lastEventTime = 0; // marker for last time we got HiBean message
 const unsigned long LAST_EVENT_TIMEOUT =
     10UL * 1000000UL; // 10 seconds (micros)
 
+extern bool touchSessionActive;
+
 bool itsbeentoolong() {
+  if (touchSessionActive) {
+    // Touch panel is actively driving the roaster locally -- skip the
+    // inactivity watchdog until the user presses STOP.
+    return false;
+  }
   unsigned long now = micros();
   unsigned long duration = now - lastEventTime;
   return (duration > LAST_EVENT_TIMEOUT);

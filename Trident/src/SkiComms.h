@@ -44,6 +44,9 @@ char CorF = 'C'; // 'C' or 'F'
 // Global temp value
 double extern temp;
 
+// Global ROR (rate of rise) value, degrees/min
+double extern ror;
+
 void pulsePin(int pin, int duration) {
   digitalWrite(pin, LOW);
   delayMicroseconds(duration);
@@ -165,6 +168,64 @@ double calculateTemp() {
   return v;
 }
 
+// ROR: how fast temp is climbing, in degrees/min -- same idea as Artisan's
+// ROR line. Computed as a moving average, 5s window: each new temp sample
+// gives an instantaneous slope vs. the previous sample, and the displayed
+// ROR is the average of every instantaneous slope from the last 5 seconds
+// (smooths out sensor jitter better than a single two-point delta would).
+// First pass, not yet tuned/validated against a real roast.
+#define ROR_WINDOW_MS 5000UL
+#define ROR_HISTORY_SIZE 20
+struct RorInstant {
+  unsigned long ms;
+  double rate; // deg/min, instantaneous slope between two consecutive samples
+};
+RorInstant rorHistory[ROR_HISTORY_SIZE];
+int rorHistoryCount = 0;
+int rorHistoryHead = 0;
+
+unsigned long lastRorSampleMs = 0;
+double lastRorSampleTemp = 0.0;
+bool haveLastRorSample = false;
+
+void updateROR(double newTemp) {
+  unsigned long now = millis();
+
+  if (haveLastRorSample) {
+    unsigned long dtMs = now - lastRorSampleMs;
+    if (dtMs > 0) {
+      double instRate = (newTemp - lastRorSampleTemp) * 60000.0 / dtMs;
+      rorHistory[rorHistoryHead] = {now, instRate};
+      rorHistoryHead = (rorHistoryHead + 1) % ROR_HISTORY_SIZE;
+      if (rorHistoryCount < ROR_HISTORY_SIZE) {
+        rorHistoryCount++;
+      }
+    }
+  }
+  lastRorSampleMs = now;
+  lastRorSampleTemp = newTemp;
+  haveLastRorSample = true;
+
+  // Average every instantaneous slope still inside the trailing window
+  // (samples are stored in chronological order, so the first one outside
+  // the window means everything further back is too).
+  double sum = 0.0;
+  int n = 0;
+  for (int j = 0; j < rorHistoryCount; j++) {
+    int idx = (rorHistoryHead - 1 - j + ROR_HISTORY_SIZE) % ROR_HISTORY_SIZE;
+    if (now - rorHistory[idx].ms > ROR_WINDOW_MS) {
+      break;
+    }
+    sum += rorHistory[idx].rate;
+    n++;
+  }
+  if (n == 0) {
+    return; // not enough history yet -- leave ror as its last value
+  }
+  ror = sum / n;
+  D_printf("ROR: %.2f /min (avg of %d samples)\n", ror, n);
+}
+
 MedianFilter<double> tempFilter(7);
 void filtTemp(double v){
   int maxV = ((CorF == 'F') ? 500 : 260); //pick appropriate max cutoff given C or F units
@@ -172,6 +233,7 @@ void filtTemp(double v){
   tempFilter.AddValue(v); //add to the collection
   temp = tempFilter.GetFiltered(); //update global temp
   D_printf("filtered temp: %.2f\n", temp);
+  updateROR(temp);
 }
 
 void extern getRoasterMessage() {
