@@ -82,11 +82,18 @@ void setup() {
   delay(5000);
   initBLE("Trident", "1.0.2", "Skywalker-Trident");
 
+#ifdef _ROASTER_TX_RMT_
+  initRoasterTxRMT();
+#else
   pinMode(TX_PIN, OUTPUT);
   digitalWrite(TX_PIN, HIGH);
+#endif
+#ifdef _ROASTER_RX_RMT_
+  initRoasterRMT();
+#else
   pinMode(RX_PIN, INPUT);
-
   attachInterrupt(RX_PIN, watchRoasterStart, FALLING);
+#endif
 
   shutdown();
 }
@@ -162,10 +169,16 @@ void loop() {
     shutdown();
   }
 
-  // roaster message start found, go get it
+  // RMT RX is non-blocking and returns immediately when there's no new
+  // frame yet, so it can just be called every loop iteration. The fallback
+  // pulseIn() path still needs the interrupt-set flag gating it.
+#ifdef _ROASTER_RX_RMT_
+  getRoasterMessage();
+#else
   if (roasterStartFound) {
     getRoasterMessage();
   }
+#endif
 
   touchLoop();
 

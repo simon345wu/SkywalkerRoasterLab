@@ -3,6 +3,14 @@
 #include <MedianFilterLib.h>
 #include <cstdint>
 
+#ifdef _ROASTER_RX_RMT_
+#include "driver/rmt_rx.h"
+#endif
+#ifdef _ROASTER_TX_RMT_
+#include "driver/rmt_tx.h"
+#include "driver/rmt_encoder.h"
+#endif
+
 // -----------------------------------------------------------------------------
 // Timing Constants
 // -----------------------------------------------------------------------------
@@ -67,6 +75,53 @@ void setValue(uint8_t *bytePtr, uint8_t value) {
   setControlChecksum();
 }
 
+#ifdef _ROASTER_TX_RMT_
+// -----------------------------------------------------------------------------
+// Roaster TX via RMT hardware -- replaces the delayMicroseconds() bit-bang
+// below. Same waveform timing as the bit-banged version (each bit =
+// {LOW, HIGH 750}; preamble = {LOW 7500, HIGH 3800}), just hardware-generated
+// so the CPU isn't busy-waiting through it. Ported from
+// TEST_SkyCommand_Node32s's rmt-roaster-rx branch.
+// -----------------------------------------------------------------------------
+static rmt_channel_handle_t roasterTxChan = NULL;
+static rmt_encoder_handle_t roasterCopyEnc = NULL;
+
+void initRoasterTxRMT() {
+  rmt_tx_channel_config_t txCfg = {};
+  txCfg.gpio_num = (gpio_num_t)TX_PIN;
+  txCfg.clk_src = RMT_CLK_SRC_DEFAULT;
+  txCfg.resolution_hz = 1000000; // 1 tick = 1us
+  txCfg.mem_block_symbols = 64;  // one frame is 1+48=49 symbols < 64
+  txCfg.trans_queue_depth = 4;
+  if (rmt_new_tx_channel(&txCfg, &roasterTxChan) != ESP_OK) {
+    D_println("[RMT] roaster TX channel init failed");
+    return;
+  }
+  rmt_copy_encoder_config_t encCfg = {};
+  rmt_new_copy_encoder(&encCfg, &roasterCopyEnc);
+  rmt_enable(roasterTxChan);
+}
+
+void extern sendRoasterMessage() {
+  rmt_symbol_word_t sym[1 + CONTROLLER_LENGTH * 8];
+  int k = 0;
+  sym[k].level0 = 0; sym[k].duration0 = START_PULSE; // preamble
+  sym[k].level1 = 1; sym[k].duration1 = START_DELAY; k++;
+  for (int i = 0; i < CONTROLLER_LENGTH; i++) {
+    for (int j = 0; j < 8; j++) { // LSB first, matches the bit-bang version
+      uint16_t low = bitRead(sendBuffer[i], j) ? 1500 : PULSE_ZERO;
+      sym[k].level0 = 0; sym[k].duration0 = low;
+      sym[k].level1 = 1; sym[k].duration1 = POST_PULSE_DELAY; k++;
+    }
+  }
+
+  rmt_transmit_config_t txc = {};
+  txc.loop_count = 0;
+  txc.flags.eot_level = 1; // leave HIGH (idle) once the frame is sent
+  rmt_transmit(roasterTxChan, roasterCopyEnc, sym, k * sizeof(rmt_symbol_word_t), &txc);
+  rmt_tx_wait_all_done(roasterTxChan, 200); // block until this frame is fully sent (~78ms); yields the task instead of busy-waiting
+}
+#else
 void extern sendRoasterMessage() {
   // D_println("sending message to roaster");
   // Start pulse
@@ -87,9 +142,93 @@ void extern sendRoasterMessage() {
     }
   }
 }
+#endif // _ROASTER_TX_RMT_
 
+#ifdef _ROASTER_RX_RMT_
 // -----------------------------------------------------------------------------
-// Interrupt to watch for start of roaster message
+// Roaster RX via RMT hardware -- replaces the interrupt + blocking pulseIn()
+// approach below. The peripheral captures pulse widths in hardware, so
+// timing isn't affected by WiFi/BLE interrupt jitter the way a software ISR
+// + pulseIn() is. Ported from TEST_SkyCommand_Node32s's rmt-roaster-rx
+// branch, validated there on real hardware.
+//
+// Key trick: Arduino's rmtRead() wrapper only supports single-shot capture
+// and deadlocks ("partial receive not supported") on a continuous stream
+// like the roaster's. The on_recv_done callback re-arms rmt_receive()
+// immediately so the peripheral keeps capturing continuously.
+// -----------------------------------------------------------------------------
+#define RMT_MAXSYM 128
+static const uint32_t PRE_MIN = 6000, PRE_MAX = 9000; // preamble LOW window (us); bit threshold reuses PULSE_ONE
+
+static rmt_channel_handle_t roasterRxChan = NULL;
+static rmt_receive_config_t roasterRxCfg;
+static rmt_symbol_word_t rmtRawBuf[RMT_MAXSYM];   // rmt_receive() writes here
+static rmt_symbol_word_t rmtReadyBuf[RMT_MAXSYM]; // callback's handoff copy for the consumer
+static volatile size_t rmtReadyNum = 0;
+static volatile bool rmtFrameReady = false; // single-producer(callback)/single-consumer(getRoasterMessage) barrier
+
+// ISR context: copy the frame out and re-arm immediately so the hardware
+// keeps receiving. Do NOT mark the rmt_symbol_word_t array volatile -- it's
+// a bitfield struct and a volatile assignment won't compile.
+static bool IRAM_ATTR onRoasterRecvDone(rmt_channel_handle_t ch,
+                                         const rmt_rx_done_event_data_t *ed,
+                                         void *user) {
+  if (!rmtFrameReady) { // only take a new frame once the previous one has been consumed
+    size_t n = ed->num_symbols;
+    if (n > RMT_MAXSYM) n = RMT_MAXSYM;
+    for (size_t i = 0; i < n; i++) rmtReadyBuf[i] = ed->received_symbols[i];
+    rmtReadyNum = n;
+    rmtFrameReady = true;
+  }
+  rmt_receive(ch, rmtRawBuf, sizeof(rmtRawBuf), &roasterRxCfg);
+  return false;
+}
+
+// Decodes one frame of RMT symbols into receiveBuffer (ROASTER_LENGTH bytes,
+// LSB first). Returns the number of bits decoded, or 0 if no preamble found.
+static int decodeRoasterFrame(const rmt_symbol_word_t *buf, size_t n) {
+  memset(receiveBuffer, 0, ROASTER_LENGTH);
+  int bit = 0;
+  bool started = false;
+  for (size_t i = 0; i < n; i++) {
+    for (int half = 0; half < 2; half++) {
+      uint32_t lvl = half == 0 ? buf[i].level0 : buf[i].level1;
+      uint32_t dur = half == 0 ? buf[i].duration0 : buf[i].duration1;
+      if (dur == 0) continue;
+      if (lvl != 0) continue; // only LOW pulses carry timing info
+      if (!started) {
+        if (dur > PRE_MIN && dur < PRE_MAX) started = true;
+      } else if (bit < ROASTER_LENGTH * 8) {
+        if (dur > (uint32_t)PULSE_ONE) receiveBuffer[bit / 8] |= (1 << (bit % 8));
+        bit++;
+      }
+    }
+  }
+  return started ? bit : 0;
+}
+
+void initRoasterRMT() {
+  rmt_rx_channel_config_t chCfg = {};
+  chCfg.gpio_num = (gpio_num_t)RX_PIN;
+  chCfg.clk_src = RMT_CLK_SRC_DEFAULT;
+  chCfg.resolution_hz = 1000000; // 1 tick = 1us
+  chCfg.mem_block_symbols = RMT_MAXSYM;
+  if (rmt_new_rx_channel(&chCfg, &roasterRxChan) != ESP_OK) {
+    D_println("[RMT] roaster RX channel init failed");
+    return;
+  }
+  rmt_rx_event_callbacks_t cbs = {};
+  cbs.on_recv_done = onRoasterRecvDone;
+  rmt_rx_register_event_callbacks(roasterRxChan, &cbs, NULL);
+  rmt_enable(roasterRxChan);
+  roasterRxCfg.signal_range_min_ns = 2000;    // 2us glitch filter (ESP32 filter cap is ~3.19us)
+  roasterRxCfg.signal_range_max_ns = 8000000; // 8ms with no edge = end of frame
+  rmt_receive(roasterRxChan, rmtRawBuf, sizeof(rmtRawBuf), &roasterRxCfg);
+}
+#else
+// -----------------------------------------------------------------------------
+// Interrupt to watch for start of roaster message (fallback when
+// _ROASTER_RX_RMT_ is off)
 // https://forum.arduino.cc/t/detecting-pulses-of-certain-lengths-using-interrupts/360570/12
 // -----------------------------------------------------------------------------
 unsigned long lastPulse;
@@ -130,6 +269,7 @@ void getMessage(int bytes, int pin) {
     }
   }
 }
+#endif // _ROASTER_RX_RMT_
 
 bool calculateRoasterChecksum() {
   uint8_t sum = 0;
@@ -236,6 +376,29 @@ void filtTemp(double v){
   updateROR(temp);
 }
 
+#ifdef _ROASTER_RX_RMT_
+// Non-blocking: the main loop runs faster than the roaster's ~8.75Hz frame
+// rate, so most calls will find no new frame yet -- that's normal, not a
+// read failure.
+void extern getRoasterMessage() {
+  if (!rmtFrameReady) {
+    return;
+  }
+  // Copy out while rmtFrameReady is still true so the callback won't
+  // overwrite rmtReadyBuf mid-copy, then release the buffer.
+  rmt_symbol_word_t local[RMT_MAXSYM];
+  size_t n = rmtReadyNum;
+  for (size_t i = 0; i < n; i++) local[i] = rmtReadyBuf[i];
+  rmtFrameReady = false;
+
+  int bits = decodeRoasterFrame(local, n);
+  if (bits < ROASTER_LENGTH * 8 || !calculateRoasterChecksum()) {
+    D_println("Not valid roaster message.");
+    return;
+  }
+  filtTemp(calculateTemp());
+}
+#else
 void extern getRoasterMessage() {
   getMessage(ROASTER_LENGTH, RX_PIN);
 
@@ -246,3 +409,4 @@ void extern getRoasterMessage() {
     D_println("Not valid roaster message.");
   }
 }
+#endif // _ROASTER_RX_RMT_
