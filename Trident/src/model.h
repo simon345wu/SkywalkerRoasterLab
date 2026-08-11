@@ -3,8 +3,10 @@
 #ifndef TRIDENT_MODEL
 #define TRIDENT_MODEL
 
-#define PRIORITY_LEVELS 4 // BLE=0, WS=1, USB=2, TOUCH=3
-
+// The four control sources are equal -- state_request_queue.cpp applies
+// whichever source most recently touched a given field (last write wins),
+// no source ranks above another. This enum exists for logging/identifying
+// which source a request came from, not for priority ordering.
 typedef enum {
   SOURCE_BLE = 0,
   SOURCE_WEBSOCKET = 1,

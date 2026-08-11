@@ -4,8 +4,6 @@
 #include <Arduino.h>
 #include <cstdint>
 
-#define STATE_QUEUE_SIZE 5
-
 extern void handleDRUM(uint8_t value);
 extern void handleCOOL(uint8_t value);
 extern void handleOT1(uint8_t value);
@@ -13,7 +11,15 @@ extern void handleVENT(uint8_t value);
 void parseAndExecuteCommands(String input);
 void applyStateRequest(StateRequestT req, StateSourceT source);
 
-static StateRequestEntryT stateQueue[STATE_QUEUE_SIZE];
+// All sources (BLE, WebSocket, USB, Touch) are equal -- whichever field a
+// request most recently touched wins, no source ranks above another. A
+// single pending request is merged into (per-field, respecting the 255 "no
+// change" sentinel) rather than replaced wholesale, so a fan-only request
+// from one source can't clobber a heater-only request from another that's
+// still waiting to be applied.
+static StateRequestT pendingRequest = {255, 255, 255, 255, ""};
+static bool pendingValid = false;
+static StateSourceT pendingSource = SOURCE_BLE;
 static SemaphoreHandle_t stateQueueMutex;
 static StateRequestT targetState = {0, 0, 0, 0, ""};
 
@@ -22,9 +28,6 @@ void initStateQueue() {
   if (stateQueueMutex == NULL) {
     D_println("Failed to create state queue mutex!");
     return;
-  }
-  for (int i = 0; i < STATE_QUEUE_SIZE; ++i) {
-    stateQueue[i].valid = false;
   }
 }
 
@@ -35,58 +38,40 @@ bool enqueueStateRequest(StateRequestT req, StateSourceT source) {
     return false;
   }
   if (xSemaphoreTake(stateQueueMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-    int lowestPriority = source;
-    int lowestIndex = -1;
-
-    for (int i = 0; i < STATE_QUEUE_SIZE; ++i) {
-      if (!stateQueue[i].valid) {
-        stateQueue[i].request = req;
-        stateQueue[i].source = source;
-        stateQueue[i].valid = true;
-        xSemaphoreGive(stateQueueMutex);
-        return true;
-      }
-      if (stateQueue[i].source < lowestPriority) {
-        lowestPriority = stateQueue[i].source;
-        lowestIndex = i;
-      }
+    if (req.cooling != 255) {
+      pendingRequest.cooling = req.cooling;
     }
-
-    // Replace lower-priority entry if needed
-    if (lowestIndex != -1) {
-      stateQueue[lowestIndex].request = req;
-      stateQueue[lowestIndex].source = source;
-      stateQueue[lowestIndex].valid = true;
-      D_println("Replaced lower-priority state request in queue.");
-      xSemaphoreGive(stateQueueMutex);
-      return true;
+    if (req.heater != 255) {
+      pendingRequest.heater = req.heater;
     }
-
+    if (req.fan != 255) {
+      pendingRequest.fan = req.fan;
+    }
+    if (req.drum != 255) {
+      pendingRequest.drum = req.drum;
+    }
+    if (!req.pidCommand.isEmpty()) {
+      pendingRequest.pidCommand = req.pidCommand;
+    }
+    pendingValid = true;
+    pendingSource = source;
     xSemaphoreGive(stateQueueMutex);
+    return true;
   }
   return false;
 }
 
 void processStateQueue() {
   if (xSemaphoreTake(stateQueueMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-    int highestPriority = -1;
-    int highestIndex = -1;
-
-    for (int i = 0; i < STATE_QUEUE_SIZE; ++i) {
-      if (stateQueue[i].valid && stateQueue[i].source > highestPriority) {
-        highestPriority = stateQueue[i].source;
-        highestIndex = i;
-      }
-    }
-
-    if (highestIndex != -1) {
-      StateRequestEntryT entry = stateQueue[highestIndex];
-      stateQueue[highestIndex].valid = false;
+    if (pendingValid) {
+      StateRequestT req = pendingRequest;
+      StateSourceT source = pendingSource;
+      pendingValid = false;
+      pendingRequest = {255, 255, 255, 255, ""};
       xSemaphoreGive(stateQueueMutex); // Release before applying
-      applyStateRequest(entry.request, entry.source);
+      applyStateRequest(req, source);
       return;
     }
-
     xSemaphoreGive(stateQueueMutex);
   }
 }

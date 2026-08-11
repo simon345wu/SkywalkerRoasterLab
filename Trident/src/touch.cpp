@@ -14,8 +14,6 @@ void touchLoop() {}
 
 bool touchSessionActive = false;
 
-extern void eStop();
-
 namespace {
 const int STEP = 5;
 const int SCREEN_WIDTH = 320;
@@ -62,6 +60,23 @@ void sendDrum(uint8_t newValue) {
   touchSessionActive = true;
 }
 
+// handleCOOL() actually takes a 0-100 percentage, but there's no screen room
+// for a full C0/C-/C+/C100 row, so this is a toggle (0/100) like Drum.
+void sendCool(uint8_t newValue) {
+  StateRequestT req = {255, 255, newValue, 255};
+  enqueueStateRequest(req, SOURCE_TOUCH);
+  touchSessionActive = true;
+}
+
+// Emergency stop: heater off, vent full open -- same as the ESTOP command
+// other interfaces use, but sent through the normal arbitration queue like
+// every other touch command (no longer a special direct bypass).
+void sendStop() {
+  StateRequestT req = {0, 100, 255, 255};
+  enqueueStateRequest(req, SOURCE_TOUCH);
+  touchSessionActive = false;
+}
+
 void handleTouch(int screenX, int screenY) {
   StateRequestT current = getCurrentState();
 
@@ -92,11 +107,13 @@ void handleTouch(int screenX, int screenY) {
   } else if (pointInRect(screenX, screenY, BTN_DRUM_X, BTN_DRUM_Y,
                           BTN_DRUM_WIDTH, BTN_DRUM_HEIGHT)) {
     sendDrum(current.drum != 0 ? 0 : 100);
+  } else if (pointInRect(screenX, screenY, BTN_COOL_X, BTN_COOL_Y,
+                          BTN_COOL_WIDTH, BTN_COOL_HEIGHT)) {
+    sendCool(current.cooling != 0 ? 0 : 100);
   } else if (pointInRect(screenX, screenY, BTN_STOP_X, BTN_STOP_Y,
                           BTN_STOP_WIDTH, BTN_STOP_HEIGHT)) {
     D_println("Touch: STOP pressed");
-    eStop();
-    touchSessionActive = false;
+    sendStop();
   }
 }
 } // namespace

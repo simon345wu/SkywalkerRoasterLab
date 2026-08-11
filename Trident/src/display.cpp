@@ -2,7 +2,7 @@
 #ifdef NO_DISPLAY
 void displayInit() {}
 void displayDashboard(float temp, float ror, uint8_t heat, uint8_t fan,
-                       bool drumOn, const char *wifiStatus,
+                       bool drumOn, bool coolOn, const char *wifiStatus,
                        const char *bleStatus, const char *usbStatus) {}
 #else
 #include <Adafruit_ILI9341.h>
@@ -127,20 +127,19 @@ void drawRowNum(GFXcanvas1 &canvas, int x, int y, const char *value,
                  ILI9341_BLACK);
 }
 
-// Drum toggle -- unlike the static buttons, its fill color reflects on/off
-// state, so it's redrawn (directly, no canvas needed -- it's a solid fill
-// plus a short fixed label, nothing to flicker against) every dashboard
-// refresh instead of once at boot.
-void drawDrumButton(bool on) {
+// Drum/Cool toggles -- unlike the static buttons, their fill color reflects
+// on/off state, so they're redrawn (directly, no canvas needed -- it's a
+// solid fill plus a short fixed label, nothing to flicker against) every
+// dashboard refresh instead of once at boot.
+void drawToggleButton(int x, int y, int w, int h, const char *label,
+                      bool on) {
   uint16_t color = on ? ILI9341_GREEN : ILI9341_DARKGREY;
-  tft.fillRoundRect(BTN_DRUM_X, BTN_DRUM_Y, BTN_DRUM_WIDTH, BTN_DRUM_HEIGHT, 6,
-                    color);
-  tft.drawRoundRect(BTN_DRUM_X, BTN_DRUM_Y, BTN_DRUM_WIDTH, BTN_DRUM_HEIGHT, 6,
-                    ILI9341_WHITE);
+  tft.fillRoundRect(x, y, w, h, 6, color);
+  tft.drawRoundRect(x, y, w, h, 6, ILI9341_WHITE);
   tft.setTextSize(2);
   tft.setTextColor(ILI9341_WHITE);
-  tft.setCursor(BTN_DRUM_X + 3, BTN_DRUM_Y + BTN_DRUM_HEIGHT / 2 - 8);
-  tft.print("DRUM");
+  tft.setCursor(x + 3, y + h / 2 - 8);
+  tft.print(label);
 }
 
 void displayInit() {
@@ -152,11 +151,11 @@ void displayInit() {
   tempCanvas.setFont(&FreeSansBold24pt7b);
   fanNumCanvas.setFont(&FreeSansBold24pt7b);
   heatNumCanvas.setFont(&FreeSansBold24pt7b);
-  displayDashboard(0, 0, 0, 0, false, "--", "--", "--");
+  displayDashboard(0, 0, 0, 0, false, false, "--", "--", "--");
 }
 
 void displayDashboard(float temp, float ror, uint8_t heat, uint8_t fan,
-                       bool drumOn, const char *wifiStatus,
+                       bool drumOn, bool coolOn, const char *wifiStatus,
                        const char *bleStatus, const char *usbStatus) {
   char buf[8];
   snprintf(buf, sizeof(buf), "%.1f", temp);
@@ -167,7 +166,10 @@ void displayDashboard(float temp, float ror, uint8_t heat, uint8_t fan,
   drawRowNum(fanNumCanvas, ROW_NUM_X, BTN_FAN_ROW_Y, buf, DASH_LIGHTGREEN);
   snprintf(buf, sizeof(buf), "%d", heat);
   drawRowNum(heatNumCanvas, ROW_NUM_X, BTN_HEAT_ROW_Y, buf, ILI9341_RED);
-  drawDrumButton(drumOn);
+  drawToggleButton(BTN_DRUM_X, BTN_DRUM_Y, BTN_DRUM_WIDTH, BTN_DRUM_HEIGHT,
+                    "DRUM", drumOn);
+  drawToggleButton(BTN_COOL_X, BTN_COOL_Y, BTN_COOL_WIDTH, BTN_COOL_HEIGHT,
+                    "COOL", coolOn);
 
   char connBuf[48];
   snprintf(connBuf, sizeof(connBuf), "WiFi:%s BLE:%s USB:%s", wifiStatus,

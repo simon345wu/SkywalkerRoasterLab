@@ -53,18 +53,26 @@
 #define BTN_STOP_Y      192
 #define BTN_STOP_HEIGHT 40
 
-// Drum on/off toggle, same row as STOP -- STOP is centered, leaving room on
-// either side. Its fill color changes with state, so (unlike the other
-// buttons) it's redrawn every dashboard refresh, not just once at boot.
+// Drum/Cool on/off toggles, same row as STOP (which is centered, leaving
+// room on both sides). handleCOOL() actually takes a 0-100 percentage, but
+// there's no screen room left for a full C0/C-/C+/C100 row, so Cool is a
+// toggle (0/100) like Drum, not a percentage control, per user's choice.
+// Both buttons' fill color changes with state, so (unlike the static
+// buttons) they're redrawn every dashboard refresh, not just once at boot.
 #define BTN_DRUM_X      4
 #define BTN_DRUM_WIDTH  70
 #define BTN_DRUM_Y      BTN_STOP_Y
 #define BTN_DRUM_HEIGHT BTN_STOP_HEIGHT
 
+#define BTN_COOL_WIDTH  70
+#define BTN_COOL_X      (320 - 4 - BTN_COOL_WIDTH)
+#define BTN_COOL_Y      BTN_STOP_Y
+#define BTN_COOL_HEIGHT BTN_STOP_HEIGHT
+
 void displayInit();
 
-// Dashboard: Temp / ROR / Heat / Fan tiles, Drum toggle, plus a small
+// Dashboard: Temp / ROR / Heat / Fan tiles, Drum/Cool toggles, plus a small
 // connection-status line.
 void displayDashboard(float temp, float ror, uint8_t heat, uint8_t fan,
-                       bool drumOn, const char *wifiStatus,
+                       bool drumOn, bool coolOn, const char *wifiStatus,
                        const char *bleStatus, const char *usbStatus);

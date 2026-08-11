@@ -128,15 +128,21 @@ void serialLoop() {
 
 void webSerialLoop(void *params) {
   while (1) {
-    String wifiStatus = (WiFi.getMode() == WIFI_AP)
-                             ? "AP"
-                             : (WiFi.status() == WL_CONNECTED ? "STA" : "--");
+    String wifiStatus;
+    if (WiFi.getMode() == WIFI_AP) {
+      wifiStatus = "AP " + WiFi.softAPIP().toString();
+    } else if (WiFi.status() == WL_CONNECTED) {
+      wifiStatus = "STA " + WiFi.localIP().toString();
+    } else {
+      wifiStatus = "--";
+    }
     String bleStatus = deviceConnected ? "OK" : "--";
     String usbStatus =
         (millis() - lastUsbActivityTime < 5000) ? "OK" : "--";
     displayDashboard(temp, ror, sendBuffer[HEAT_BYTE], sendBuffer[VENT_BYTE],
-                      sendBuffer[DRUM_BYTE] != 0, wifiStatus.c_str(),
-                      bleStatus.c_str(), usbStatus.c_str());
+                      sendBuffer[DRUM_BYTE] != 0, sendBuffer[COOL_BYTE] != 0,
+                      wifiStatus.c_str(), bleStatus.c_str(),
+                      usbStatus.c_str());
     WebSerial.loop();
     delay(250);
     ledControl();
