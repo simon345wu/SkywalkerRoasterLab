@@ -15,11 +15,15 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
                AwsEventType type, void *arg, uint8_t *data, size_t len) {
 
   switch (type) {
-  case WS_EVT_CONNECT:
+  case WS_EVT_CONNECT: {
     D_printf("[%u] Connected!\n", client->id());
-    // client->text("Connected");
-
-    break;
+    // Artisan's own "ON" event action is unreliable over WebSocket (races
+    // its device connection setup, see PROGRESS.md) so the drum is started
+    // here instead, directly on socket connect, rather than depending on
+    // Artisan sending a command for it.
+    StateRequestT onConnectReq = {255, 255, 255, 100};
+    enqueueStateRequest(onConnectReq, SOURCE_WEBSOCKET);
+  } break;
   case WS_EVT_DISCONNECT: {
     D_printf("[%u] Disconnected!\n", client->id());
     // turn off heater and set fan to 100%
