@@ -103,13 +103,44 @@ void setup() {
   // self-paces off its own millis() check, webSocket/BLE just refresh a
   // state snapshot). Split out so display refresh keeps its own 250ms
   // rhythm without holding anything else to it.
-  xTaskCreate(displayLoop, "DisplayTask", configMINIMAL_STACK_SIZE + 2048,
+  // Stack bumped well past the old dashboard code's +2048 -- LVGL's
+  // lv_timer_handler() (object tree walk, font/glyph rendering) runs much
+  // deeper than the old direct tft.print() calls ever did, and the original
+  // size was crashing/rebooting the board (confirmed via hardware testing:
+  // screen cycling between blank/partial/never-quite-finished states).
+  xTaskCreate(displayLoop, "DisplayTask", configMINIMAL_STACK_SIZE + 8192,
               NULL, 1, NULL);
   displayInit();
+  // touchInit() before lvglInit(): lvglInit() now wires an LVGL indev whose
+  // read callback (display.cpp) calls into touch.cpp's touchGetPoint(),
+  // which needs the XPT2046 hardware already begun.
   touchInit();
+  lvglInit(); // minimal LVGL bring-up (lvgl-ui branch), see displayLoop()
   myPID.SetOutputLimits(0, 95);
   delay(5000);
-  initBLE("Trident", "1.0.2", "Skywalker-Trident");
+  // HiBean's "Skywalker Comm" mode wouldn't connect at all with either
+  // "Skywalker-Trident" (this fork's original name) or "SkiBean" (an
+  // unverified internet guess, also tried and also didn't help). Found the
+  // actual reference name in this repo's HiBean/SkiBeanQuickSV/SkiBLE.h
+  // (a real HiBean-compatible firmware) -- it advertises as exactly this
+  // string. "Skywalker HB" mode has already connected successfully under
+  // two different names, so it's evidently not name-gated and shouldn't
+  // care about this change.
+  // Experiment: HiBean HB mode connects and takes control commands fine,
+  // but never displays temperature and never sends READ/CHAN to ask for
+  // it -- yet both reference firmwares in this repo (HiBean/SkiBeanQuickSV
+  // and HiBean/ESP32S3_Zero_Artisan_HiBean_Roaster_Control_v1.63.ino) show
+  // HiBean *should* poll via READ. Unproven theory: HiBean reads the BLE
+  // Device Information Service (characteristics 2A28/2A26, sketchName/
+  // firmwareVersion below) to decide whether it recognizes this as a
+  // compatible device before it starts asking for temperature -- GATT
+  // reads don't go through onWrite()/D_println, so there's no visibility
+  // into whether this actually happens. Trying the exact identity strings
+  // from the more complete Artisan+HiBean reference firmware (the closest
+  // analog to what Trident does) instead of the arbitrary "Trident"/
+  // "1.0.2" this fork used.
+  initBLE("ESP32S3_Zero_Artisan_HiBean_Roaster_Control_v1.63.ino",
+         "ESP32S3-Zero_Artisan+HiBean_v1.6.3", "ESP32_Skycommand_BLE");
 
 #ifdef _ROASTER_TX_RMT_
   initRoasterTxRMT();
@@ -195,44 +226,15 @@ void webSerialLoop(void *params) {
   vTaskDelete(NULL);
 }
 
+// Minimal LVGL bring-up (lvgl-ui branch): the old status-string dashboard
+// drawing is on hold here (still on touch-panel-control/main) while this
+// proves LVGL itself works end-to-end. lv_timer_handler() wants calling
+// frequently, not paced to display refresh, so this task's cadence dropped
+// from 250ms to 5ms.
 void displayLoop(void *params) {
   while (1) {
-    String wifiStatus;
-    if (WiFi.getMode() == WIFI_AP) {
-      wifiStatus = "AP " + WiFi.softAPIP().toString();
-    } else if (WiFi.status() == WL_CONNECTED) {
-      wifiStatus = "STA " + WiFi.localIP().toString();
-    } else {
-      wifiStatus = "--";
-    }
-    // Two independent states per interface, shown as 2 chars: 1st = link/
-    // transport is there at all, 2nd = the controlling app actually did the
-    // CHAN handshake over it. Being linked doesn't mean it's actually being
-    // used (e.g. raw testing without ever sending CHAN), so collapsing both
-    // into one OK/-- would hide that distinction.
-    String wsStatus = String(wsClientConnected() ? "C" : "-") +
-                      (wsHandshakeDone ? "H" : "-");
-
-    String bleStatus = String(deviceConnected ? "C" : "-") +
-                       (hibeanHandshakeDone ? "H" : "-");
-
-    // USB has no explicit connect/disconnect signal like BLE does, so
-    // "link" is approximated as "seen any byte in the last 5s". If that
-    // goes quiet, treat the handshake as stale too -- a fresh Artisan
-    // session re-sends CHAN before it resumes polling, so this naturally
-    // re-latches on reconnect rather than showing a stuck "handshaked"
-    // state from a session that's actually long gone.
-    bool usbLinkActive = (millis() - lastUsbActivityTime < 5000);
-    if (!usbLinkActive) {
-      artisanHandshakeDone = false;
-    }
-    String usbStatus = String(usbLinkActive ? "C" : "-") +
-                       (artisanHandshakeDone ? "H" : "-");
-    displayDashboard(temp, ror, sendBuffer[HEAT_BYTE], sendBuffer[VENT_BYTE],
-                      sendBuffer[DRUM_BYTE] != 0, sendBuffer[COOL_BYTE] != 0,
-                      wifiStatus.c_str(), wsStatus.c_str(), bleStatus.c_str(),
-                      usbStatus.c_str());
-    delay(250);
+    lvglLoop();
+    delay(5);
   }
   vTaskDelete(NULL);
 }

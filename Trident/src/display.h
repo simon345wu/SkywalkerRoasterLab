@@ -71,6 +71,12 @@
 
 void displayInit();
 
+// Minimal LVGL bring-up (lvgl-ui branch). Reuses the same tft object/SPI
+// bus displayInit() already sets up -- call lvglInit() after displayInit(),
+// then lvglLoop() periodically (e.g. every 5ms) instead of displayDashboard().
+void lvglInit();
+void lvglLoop();
+
 // Dashboard: Temp / ROR / Heat / Fan tiles, Drum/Cool toggles, plus a small
 // connection-status line.
 void displayDashboard(float temp, float ror, uint8_t heat, uint8_t fan,
