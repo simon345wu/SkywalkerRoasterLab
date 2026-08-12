@@ -52,12 +52,27 @@ const char rgbLedPin = RGB_PIN;
 bool isOn = false;
 BloodhoundStateT m_state = booting;
 void webSerialLoop(void *params);
+void displayLoop(void *params);
 void ledControl();
+void serialCommandTask(void *params);
 extern bool deviceConnected;
 unsigned long lastUsbActivityTime = 0; // marker for USB status display
 
 void setup() {
   Serial.begin(115200);
+#ifdef S3
+  // Own dedicated task instead of polling from webSerialLoop()'s 250ms-paced
+  // task -- that delay was sized for display refresh, not for how fast
+  // Artisan's TC4 handshake (e.g. CHAN, ~100ms budget) needs a reply.
+  // (Tried Serial.onReceive() first to make this event-driven like
+  // BLE/WebSocket already are -- confirmed via WebSerial + raw serial
+  // round-trip tests that the callback never fires at all on this
+  // pioarduino/IDF 5.5.5 + ESP32-S3 combination, so falling back to polling,
+  // just decoupled from the display's cadence and fast enough -- 5ms --
+  // to comfortably clear Artisan's window.)
+  xTaskCreate(serialCommandTask, "SerialCmdTask", configMINIMAL_STACK_SIZE + 4096,
+              NULL, 2, NULL);
+#endif
   delay(100);
   pinMode(rgbLedPin, OUTPUT);
 
@@ -75,6 +90,14 @@ void setup() {
   setupApi(&server);
   server.begin();
   xTaskCreate(webSerialLoop, "WebSerialTask", configMINIMAL_STACK_SIZE + 2048,
+              NULL, 1, NULL);
+  // Display drawing was only ever sharing webSerialLoop()'s 250ms delay by
+  // coincidence -- nothing else left in that loop actually needs pacing
+  // (WebSerial.loop() is designed for tight-loop calling, ledControl()
+  // self-paces off its own millis() check, webSocket/BLE just refresh a
+  // state snapshot). Split out so display refresh keeps its own 250ms
+  // rhythm without holding anything else to it.
+  xTaskCreate(displayLoop, "DisplayTask", configMINIMAL_STACK_SIZE + 2048,
               NULL, 1, NULL);
   displayInit();
   touchInit();
@@ -111,12 +134,7 @@ void bleLoop() {
   StateRequestT req = bleTick(data);
 }
 
-void serialLoop() {
-  if (Serial.available() <= 0) {
-    return;
-  }
-  lastUsbActivityTime = millis();
-  String command = Serial.readStringUntil('\n');
+void handleSerialCommand(String command) {
   command.trim();
   CommandTypeT type = classifyCommandType(command);
   if (type == CMDType_READ) {
@@ -125,6 +143,8 @@ void serialLoop() {
                      String(_currentState.heater) + "," +
                      String(_currentState.fan) + "\r\n";
     Serial.println(readMsg);
+  } else if (type == CMDType_CHAN) {
+    Serial.println("# Active channels set to 2100\r\n");
   } else if (type == CMDType_STATE_REQUEST) {
     StateRequestT req = parseCommandToStateRequest(command);
     enqueueStateRequest(req, SOURCE_USB);
@@ -133,7 +153,42 @@ void serialLoop() {
   }
 }
 
+// Dedicated task, polling every 5ms -- independent of webSerialLoop()'s
+// 250ms display-refresh cadence, so a command like Artisan's CHAN (~100ms
+// budget) gets read and replied to well within its window.
+void serialCommandTask(void *params) {
+  String serialAccum;
+  while (1) {
+    while (Serial.available() > 0) {
+      char c = (char)Serial.read();
+      if (c == '\n') {
+        lastUsbActivityTime = millis();
+        handleSerialCommand(serialAccum);
+        serialAccum = "";
+      } else {
+        serialAccum += c;
+      }
+    }
+    vTaskDelay(pdMS_TO_TICKS(5));
+  }
+}
+
 void webSerialLoop(void *params) {
+  while (1) {
+    WebSerial.loop();
+    // No longer paced to 250ms for display's sake (see displayLoop) --
+    // just a minimal yield so this task doesn't starve the scheduler/
+    // watchdog. ledControl() self-paces via its own millis() check;
+    // WebSerial.loop()/webSocketLoop()/bleLoop() are fine called this often.
+    vTaskDelay(pdMS_TO_TICKS(1));
+    ledControl();
+    webSocketLoop();
+    bleLoop();
+  }
+  vTaskDelete(NULL);
+}
+
+void displayLoop(void *params) {
   while (1) {
     String wifiStatus;
     if (WiFi.getMode() == WIFI_AP) {
@@ -150,14 +205,7 @@ void webSerialLoop(void *params) {
                       sendBuffer[DRUM_BYTE] != 0, sendBuffer[COOL_BYTE] != 0,
                       wifiStatus.c_str(), bleStatus.c_str(),
                       usbStatus.c_str());
-    WebSerial.loop();
     delay(250);
-    ledControl();
-#ifdef S3
-    serialLoop();
-#endif
-    webSocketLoop();
-    bleLoop();
   }
   vTaskDelete(NULL);
 }
