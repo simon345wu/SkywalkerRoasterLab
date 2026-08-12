@@ -75,4 +75,5 @@ void displayInit();
 // connection-status line.
 void displayDashboard(float temp, float ror, uint8_t heat, uint8_t fan,
                        bool drumOn, bool coolOn, const char *wifiStatus,
-                       const char *bleStatus, const char *usbStatus);
+                       const char *wsStatus, const char *bleStatus,
+                       const char *usbStatus);

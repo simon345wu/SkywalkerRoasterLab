@@ -3,7 +3,8 @@
 void displayInit() {}
 void displayDashboard(float temp, float ror, uint8_t heat, uint8_t fan,
                        bool drumOn, bool coolOn, const char *wifiStatus,
-                       const char *bleStatus, const char *usbStatus) {}
+                       const char *wsStatus, const char *bleStatus,
+                       const char *usbStatus) {}
 #else
 #include <Adafruit_ILI9341.h>
 #include <Fonts/FreeSansBold24pt7b.h>
@@ -151,12 +152,13 @@ void displayInit() {
   tempCanvas.setFont(&FreeSansBold24pt7b);
   fanNumCanvas.setFont(&FreeSansBold24pt7b);
   heatNumCanvas.setFont(&FreeSansBold24pt7b);
-  displayDashboard(0, 0, 0, 0, false, false, "--", "--", "--");
+  displayDashboard(0, 0, 0, 0, false, false, "--", "--", "--", "--");
 }
 
 void displayDashboard(float temp, float ror, uint8_t heat, uint8_t fan,
                        bool drumOn, bool coolOn, const char *wifiStatus,
-                       const char *bleStatus, const char *usbStatus) {
+                       const char *wsStatus, const char *bleStatus,
+                       const char *usbStatus) {
   char buf[8];
   snprintf(buf, sizeof(buf), "%.1f", temp);
   drawTempTile(buf);
@@ -171,9 +173,9 @@ void displayDashboard(float temp, float ror, uint8_t heat, uint8_t fan,
   drawToggleButton(BTN_COOL_X, BTN_COOL_Y, BTN_COOL_WIDTH, BTN_COOL_HEIGHT,
                     "COOL", coolOn);
 
-  char connBuf[48];
-  snprintf(connBuf, sizeof(connBuf), "WiFi:%s BLE:%s USB:%s", wifiStatus,
-           bleStatus, usbStatus);
+  char connBuf[64];
+  snprintf(connBuf, sizeof(connBuf), "WiFi:%s WS:%s BLE:%s USB:%s", wifiStatus,
+           wsStatus, bleStatus, usbStatus);
   connCanvas.fillScreen(0);
   connCanvas.setTextSize(1);
   connCanvas.setCursor(3, 4);

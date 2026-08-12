@@ -5,6 +5,8 @@
 
 void setupMainLoop(AsyncWebServer *server);
 StateRequestT socketTick(StateDataT data);
+bool wsClientConnected();
+extern bool wsHandshakeDone;
 
 
 

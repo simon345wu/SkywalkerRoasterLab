@@ -11,6 +11,14 @@ AsyncWebSocket ws("/ws");
 StateDataT state = {0};
 StateRequestT request = {255, 255, 255, 255};
 
+// Distinct from "a WebSocket client is connected" (see wsClientConnected()):
+// this only flips once the client actually sends a getData request, i.e.
+// Artisan (not just some raw TCP/WS connection) is really talking to us.
+// Mirrors artisanHandshakeDone/hibeanHandshakeDone for USB/BLE.
+bool wsHandshakeDone = false;
+
+bool wsClientConnected() { return ws.count() > 0; }
+
 void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
                AwsEventType type, void *arg, uint8_t *data, size_t len) {
 
@@ -26,6 +34,7 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
   } break;
   case WS_EVT_DISCONNECT: {
     D_printf("[%u] Disconnected!\n", client->id());
+    wsHandshakeDone = false;
     // turn off heater and set fan to 100%
     // setHeaterPower(0);
     // setFanSpeed(100);
@@ -89,6 +98,7 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
     root["id"] = ln_id;
     const char *command = doc["command"].as<const char *>();
     if (command != NULL && strncmp(command, "getData", 7) == 0) {
+      wsHandshakeDone = true;
       root["data"]["ET"] = state.temp; // Med_ExhaustTemp.getMedian()
       root["data"]["BT"] = state.temp; // Med_BeanTemp.getMedian();
       root["data"]["BurnerVal"] = state.request.heater;

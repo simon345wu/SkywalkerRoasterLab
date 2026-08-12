@@ -210,6 +210,9 @@ void displayLoop(void *params) {
     // CHAN handshake over it. Being linked doesn't mean it's actually being
     // used (e.g. raw testing without ever sending CHAN), so collapsing both
     // into one OK/-- would hide that distinction.
+    String wsStatus = String(wsClientConnected() ? "C" : "-") +
+                      (wsHandshakeDone ? "H" : "-");
+
     String bleStatus = String(deviceConnected ? "C" : "-") +
                        (hibeanHandshakeDone ? "H" : "-");
 
@@ -227,7 +230,7 @@ void displayLoop(void *params) {
                        (artisanHandshakeDone ? "H" : "-");
     displayDashboard(temp, ror, sendBuffer[HEAT_BYTE], sendBuffer[VENT_BYTE],
                       sendBuffer[DRUM_BYTE] != 0, sendBuffer[COOL_BYTE] != 0,
-                      wifiStatus.c_str(), bleStatus.c_str(),
+                      wifiStatus.c_str(), wsStatus.c_str(), bleStatus.c_str(),
                       usbStatus.c_str());
     delay(250);
   }
