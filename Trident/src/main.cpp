@@ -56,7 +56,13 @@ void displayLoop(void *params);
 void ledControl();
 void serialCommandTask(void *params);
 extern bool deviceConnected;
+extern bool hibeanHandshakeDone;
 unsigned long lastUsbActivityTime = 0; // marker for USB status display
+// Set once Artisan's CHAN handshake succeeds -- distinct from mere USB
+// activity (raw testing/garbage bytes shouldn't count as "connected").
+// Cleared if traffic goes quiet (see displayLoop's usbStatus), since a
+// fresh Artisan session always re-sends CHAN before it resumes polling.
+bool artisanHandshakeDone = false;
 
 void setup() {
   Serial.begin(115200);
@@ -145,6 +151,7 @@ void handleSerialCommand(String command) {
     Serial.println(readMsg);
   } else if (type == CMDType_CHAN) {
     Serial.println("# Active channels set to 2100\r\n");
+    artisanHandshakeDone = true;
   } else if (type == CMDType_STATE_REQUEST) {
     StateRequestT req = parseCommandToStateRequest(command);
     enqueueStateRequest(req, SOURCE_USB);
@@ -198,9 +205,26 @@ void displayLoop(void *params) {
     } else {
       wifiStatus = "--";
     }
-    String bleStatus = deviceConnected ? "OK" : "--";
-    String usbStatus =
-        (millis() - lastUsbActivityTime < 5000) ? "OK" : "--";
+    // Two independent states per interface, shown as 2 chars: 1st = link/
+    // transport is there at all, 2nd = the controlling app actually did the
+    // CHAN handshake over it. Being linked doesn't mean it's actually being
+    // used (e.g. raw testing without ever sending CHAN), so collapsing both
+    // into one OK/-- would hide that distinction.
+    String bleStatus = String(deviceConnected ? "C" : "-") +
+                       (hibeanHandshakeDone ? "H" : "-");
+
+    // USB has no explicit connect/disconnect signal like BLE does, so
+    // "link" is approximated as "seen any byte in the last 5s". If that
+    // goes quiet, treat the handshake as stale too -- a fresh Artisan
+    // session re-sends CHAN before it resumes polling, so this naturally
+    // re-latches on reconnect rather than showing a stuck "handshaked"
+    // state from a session that's actually long gone.
+    bool usbLinkActive = (millis() - lastUsbActivityTime < 5000);
+    if (!usbLinkActive) {
+      artisanHandshakeDone = false;
+    }
+    String usbStatus = String(usbLinkActive ? "C" : "-") +
+                       (artisanHandshakeDone ? "H" : "-");
     displayDashboard(temp, ror, sendBuffer[HEAT_BYTE], sendBuffer[VENT_BYTE],
                       sendBuffer[DRUM_BYTE] != 0, sendBuffer[COOL_BYTE] != 0,
                       wifiStatus.c_str(), bleStatus.c_str(),

@@ -35,6 +35,11 @@
 BLEServer *pServer = nullptr;
 BLECharacteristic *pTxCharacteristic = nullptr;
 bool extern deviceConnected = false;
+// Distinct from deviceConnected: that's just the BLE link (radio-level
+// pairing), this is "HiBean actually started talking TC4 to us" (sent
+// CHAN). Mirrors artisanHandshakeDone for USB in main.cpp -- same "OK"
+// should mean the controlling app is really using us, not just connected.
+bool hibeanHandshakeDone = false;
 extern String firmWareVersion;
 extern String sketchName;
 
@@ -68,6 +73,7 @@ class MyServerCallbacks : public BLEServerCallbacks {
   }
   void onDisconnect(BLEServer *pServer) override {
     deviceConnected = false;
+    hibeanHandshakeDone = false;
     D_println("BLE: Client disconnected. Restarting advertising...");
     pServer->getAdvertising()->start();
   }
@@ -98,6 +104,7 @@ class MyCallbacks : public BLECharacteristicCallbacks {
         String message = "# Active channels set to 2100\r\n";
         D_println(message);
         notifyBLEClient(message);
+        hibeanHandshakeDone = true;
       }
       _currentRequest = parseCommandToStateRequest(input);
       enqueueStateRequest(_currentRequest, SOURCE_BLE);
