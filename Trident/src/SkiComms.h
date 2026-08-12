@@ -308,62 +308,82 @@ double calculateTemp() {
   return v;
 }
 
-// ROR: how fast temp is climbing, in degrees/min -- same idea as Artisan's
-// ROR line. Computed as a moving average, 5s window: each new temp sample
-// gives an instantaneous slope vs. the previous sample, and the displayed
-// ROR is the average of every instantaneous slope from the last 5 seconds
-// (smooths out sensor jitter better than a single two-point delta would).
-// First pass, not yet tuned/validated against a real roast.
-#define ROR_WINDOW_MS 5000UL
-#define ROR_HISTORY_SIZE 20
-struct RorInstant {
+// ROR: how fast temp is climbing, in degrees/min. Ported to match Artisan's
+// own default algorithm (artisanlib/canvas.py's compute_ror_simple(),
+// polyfitRoRcalc=false is the default and what skywalker.aset uses) instead
+// of our earlier home-grown "average a bunch of noisy instantaneous
+// slopes over 5s" approach, so the number shown here reads similarly to
+// what Artisan itself will plot from the same temperature stream.
+//
+// Artisan's actual algorithm: one slope between *now* and a point
+// ROR_SPAN_MS ago (skywalker.aset's DeltaSpan/DeltaETspan = 20s -- if that's
+// ever changed in Artisan, update this to match). The "old" end of that
+// slope is smoothed by locally averaging samples within
+// ROR_LEFT_SMOOTH_MS of it -- deliberately *not* averaging the current/new
+// end, so smoothing doesn't add lag to the most recent reading. Artisan
+// does this as a 5-sample average at its own ~2s sampling rate (skywalker
+// .aset's Delay=2000); we sample much faster (~114ms via RMT), so the
+// equivalent is expressed as a time window rather than a fixed sample
+// count.
+#define ROR_SPAN_MS 20000UL
+#define ROR_LEFT_SMOOTH_MS 2000UL
+#define ROR_HISTORY_SIZE 256 // comfortably covers ROR_SPAN_MS at our ~114ms roaster sample rate
+struct TempSample {
   unsigned long ms;
-  double rate; // deg/min, instantaneous slope between two consecutive samples
+  double temp;
 };
-RorInstant rorHistory[ROR_HISTORY_SIZE];
+TempSample rorHistory[ROR_HISTORY_SIZE];
 int rorHistoryCount = 0;
-int rorHistoryHead = 0;
-
-unsigned long lastRorSampleMs = 0;
-double lastRorSampleTemp = 0.0;
-bool haveLastRorSample = false;
+int rorHistoryHead = 0; // index one past the most recently written sample
 
 void updateROR(double newTemp) {
   unsigned long now = millis();
 
-  if (haveLastRorSample) {
-    unsigned long dtMs = now - lastRorSampleMs;
-    if (dtMs > 0) {
-      double instRate = (newTemp - lastRorSampleTemp) * 60000.0 / dtMs;
-      rorHistory[rorHistoryHead] = {now, instRate};
-      rorHistoryHead = (rorHistoryHead + 1) % ROR_HISTORY_SIZE;
-      if (rorHistoryCount < ROR_HISTORY_SIZE) {
-        rorHistoryCount++;
-      }
-    }
+  rorHistory[rorHistoryHead] = {now, newTemp};
+  rorHistoryHead = (rorHistoryHead + 1) % ROR_HISTORY_SIZE;
+  if (rorHistoryCount < ROR_HISTORY_SIZE) {
+    rorHistoryCount++;
   }
-  lastRorSampleMs = now;
-  lastRorSampleTemp = newTemp;
-  haveLastRorSample = true;
 
-  // Average every instantaneous slope still inside the trailing window
-  // (samples are stored in chronological order, so the first one outside
-  // the window means everything further back is too).
-  double sum = 0.0;
-  int n = 0;
+  // Walk backward from the most recent sample to find the oldest one that's
+  // still within ROR_SPAN_MS -- that's our anchor (Artisan's left_index).
+  int anchorIdx = -1;
   for (int j = 0; j < rorHistoryCount; j++) {
     int idx = (rorHistoryHead - 1 - j + ROR_HISTORY_SIZE) % ROR_HISTORY_SIZE;
-    if (now - rorHistory[idx].ms > ROR_WINDOW_MS) {
+    if (now - rorHistory[idx].ms >= ROR_SPAN_MS) {
+      anchorIdx = idx;
       break;
     }
-    sum += rorHistory[idx].rate;
-    n++;
   }
-  if (n == 0) {
-    return; // not enough history yet -- leave ror as its last value
+  if (anchorIdx == -1) {
+    return; // not ROR_SPAN_MS of history yet -- leave ror as its last value
   }
-  ror = sum / n;
-  D_printf("ROR: %.2f /min (avg of %d samples)\n", ror, n);
+
+  double timedSec = (now - rorHistory[anchorIdx].ms) / 1000.0;
+  if (timedSec <= 0) {
+    return;
+  }
+
+  // Local average of samples near the anchor's timestamp (not sample
+  // count, since our sampling rate is much finer than Artisan's).
+  double leftSum = 0.0;
+  int leftN = 0;
+  for (int j = 0; j < rorHistoryCount; j++) {
+    int idx = (rorHistoryHead - 1 - j + ROR_HISTORY_SIZE) % ROR_HISTORY_SIZE;
+    long delta = (long)rorHistory[idx].ms - (long)rorHistory[anchorIdx].ms;
+    if (delta > (long)ROR_LEFT_SMOOTH_MS) {
+      continue; // still newer than the smoothing window, keep scanning back
+    }
+    if (delta < -(long)ROR_LEFT_SMOOTH_MS) {
+      break; // now older than the smoothing window -- everything further back is too
+    }
+    leftSum += rorHistory[idx].temp;
+    leftN++;
+  }
+  double leftAvg = leftN > 0 ? leftSum / leftN : rorHistory[anchorIdx].temp;
+
+  ror = (newTemp - leftAvg) / timedSec * 60.0;
+  D_printf("ROR: %.2f /min (span %.1fs, %d-sample left avg)\n", ror, timedSec, leftN);
 }
 
 MedianFilter<double> tempFilter(7);
