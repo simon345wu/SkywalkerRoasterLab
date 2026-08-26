@@ -1,4 +1,5 @@
 #include "dlog.h"
+#include "et_sensor.h"
 #include <Arduino.h>
 // -----------------------------------------------------------------------------
 // External variables
@@ -81,7 +82,9 @@ void handleOT1(uint8_t value) {
 }
 
 void handleREAD() {
-  String readMsg = "0," + String(temp, 1) + "," + String(temp, 1) + "," +
+  // ambient, ET, BT, heater, fan. ET = external MAX31865 probe (etReport()
+  // mirrors BT when there's no probe / it faulted); BT = roaster's own probe.
+  String readMsg = "0," + String(etReport(), 1) + "," + String(temp, 1) + "," +
                    String(sendBuffer[HEAT_BYTE]) + "," +
                    String(sendBuffer[VENT_BYTE]) + "\r\n";
   D_print("READ Output: ");

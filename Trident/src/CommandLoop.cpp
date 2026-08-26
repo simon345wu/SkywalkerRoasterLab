@@ -99,8 +99,8 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
     const char *command = doc["command"].as<const char *>();
     if (command != NULL && strncmp(command, "getData", 7) == 0) {
       wsHandshakeDone = true;
-      root["data"]["ET"] = state.temp; // Med_ExhaustTemp.getMedian()
-      root["data"]["BT"] = state.temp; // Med_BeanTemp.getMedian();
+      root["data"]["ET"] = state.et;   // external MAX31865 probe (or BT mirrored)
+      root["data"]["BT"] = state.temp; // roaster's own probe
       root["data"]["BurnerVal"] = state.request.heater;
       root["data"]["FanVal"] = state.request.fan;
       root["data"]["Drum"] = state.request.drum;

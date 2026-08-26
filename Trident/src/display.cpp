@@ -37,9 +37,9 @@ Adafruit_ILI9341 tft = Adafruit_ILI9341(&tftSPI, TFT_DC, TFT_CS, TFT_RST);
 #define TILE_TEMP_BASELINE 48
 
 // ROR (rate of rise, deg/min) sits to the right of Temp -- reserved now,
-// even though the underlying calculation ([SkiComms.h](src/SkiComms.h)'s
-// updateROR()) is a first pass and hasn't been validated against a real
-// roast yet. Small classic-font caption ("ROR"), but the value uses the same
+// even though the underlying calculation (RorTracker in ror.cpp, fed from
+// SkiComms.h's filtTemp()) is a first pass and hasn't been validated against
+// a real roast yet. Small classic-font caption ("ROR"), but the value uses the same
 // FreeSansBold24pt7b as Temp -- ROR/Fan/Heat values are all sized to match.
 // Wide enough for "+15.3" (1 decimal place) at that font's char widths.
 #define TILE_ROR_X              188
@@ -192,6 +192,7 @@ void displayDashboard(float temp, float ror, uint8_t heat, uint8_t fan,
 // object, before any of the dashboard gets rebuilt as LVGL widgets.
 // -----------------------------------------------------------------------------
 #include "ble.h"
+#include "et_sensor.h"
 #include "touch.h"
 #include <Preferences.h>
 #include <WiFi.h>
@@ -332,6 +333,8 @@ static lv_obj_t *configScreen = nullptr;
 
 static lv_obj_t *tempLabel = nullptr;
 static lv_obj_t *rorLabel = nullptr;
+static lv_obj_t *etLabel = nullptr;    // external MAX31865 probe
+static lv_obj_t *etRorLabel = nullptr; // ET rate-of-rise
 static lv_obj_t *wifiIpLabel = nullptr; // now lives on configScreen
 static lv_obj_t *bleNameLabel = nullptr; // configScreen
 static lv_obj_t *wifiLed = nullptr;
@@ -614,6 +617,18 @@ static void lvglRefreshCb(lv_timer_t *timer) {
   snprintf(buf, sizeof(buf), "%+.1f", ror);
   lv_label_set_text(rorLabel, buf);
 
+  // ET / ET RoR from the external MAX31865 probe -- "--.-" until it has
+  // produced a fault-free reading (unplugged, faulted, or a non-S3 build).
+  if (etSensorHealthy()) {
+    snprintf(buf, sizeof(buf), "%.1f", etTemp);
+    lv_label_set_text(etLabel, buf);
+    snprintf(buf, sizeof(buf), "%+.1f", etRor);
+    lv_label_set_text(etRorLabel, buf);
+  } else {
+    lv_label_set_text(etLabel, "--.-");
+    lv_label_set_text(etRorLabel, "--.-");
+  }
+
   // Same AP/STA-IP text the old (non-LVGL) dashboard showed -- the LED
   // alone tells you "connected or not" at a glance, but Artisan/HiBean
   // setup needs the actual IP, which a colored dot can't show.
@@ -819,21 +834,20 @@ void lvglInit() {
 
   // ---- Temp readouts: BT / BT RoR / ET / ET RoR (2nd row) -----------------
   // Four equal tiles with a 4px margin on both screen edges and 4px gaps
-  // between them (75px tile width: (320 - 4*2 - 3*4) / 4). Only BT/BT RoR
-  // are wired to real data right now (this board only reads one
-  // temperature channel) -- ET/ET RoR are reserved placeholders per user
-  // request, showing a permanent "--.-" until a second (environment)
-  // temperature channel actually exists to drive them.
+  // between them (75px tile width: (320 - 4*2 - 3*4) / 4). BT/BT RoR come
+  // from the roaster's own probe over the serial protocol; ET/ET RoR come
+  // from the external MAX31865 + PT100 probe (et_sensor.cpp) and show "--.-"
+  // whenever that probe is absent or faulted (see lvglRefreshCb()).
   tempLabel = createReadoutTile(mainScreen, 4, 26, 75, 46, "BT", LV_PALETTE_RED);
   lv_label_set_text(tempLabel, "--.-");
   rorLabel = createReadoutTile(mainScreen, 83, 26, 75, 46, "BT RoR",
                                LV_PALETTE_ORANGE);
   lv_label_set_text(rorLabel, "--.-");
-  lv_obj_t *etLabel =
+  etLabel =
       createReadoutTile(mainScreen, 162, 26, 75, 46, "ET", LV_PALETTE_CYAN);
   lv_label_set_text(etLabel, "--.-");
-  lv_obj_t *etRorLabel = createReadoutTile(mainScreen, 241, 26, 75, 46,
-                                           "ET RoR", LV_PALETTE_GREEN);
+  etRorLabel = createReadoutTile(mainScreen, 241, 26, 75, 46, "ET RoR",
+                                 LV_PALETTE_GREEN);
   lv_label_set_text(etRorLabel, "--.-");
 
   // ---- Fan / Heat sliders -------------------------------------------------

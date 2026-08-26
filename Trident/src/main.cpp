@@ -12,6 +12,7 @@
 #include "api.h"
 #include "ble.h"
 #include "display.h"
+#include "et_sensor.h"
 #include "model.h"
 #include "pindef.h"
 #include "state_request_queue.h"
@@ -115,6 +116,9 @@ void setup() {
   // read callback (display.cpp) calls into touch.cpp's touchGetPoint(),
   // which needs the XPT2046 hardware already begun.
   touchInit();
+  // ET probe (MAX31865) shares the SPI bus touchInit() just brought up -- must
+  // come after it. No-op on non-S3 builds.
+  etSensorInit();
   lvglInit(); // minimal LVGL bring-up (lvgl-ui branch), see displayLoop()
   myPID.SetOutputLimits(0, 95);
   delay(5000);
@@ -161,13 +165,13 @@ void setup() {
 StateRequestT _currentState = {0};
 void webSocketLoop() {
   handleREAD();
-  StateDataT data = {temp, _currentState};
+  StateDataT data = {temp, etReport(), _currentState};
   StateRequestT req = socketTick(data);
 }
 
 void bleLoop() {
 
-  StateDataT data = {temp, _currentState};
+  StateDataT data = {temp, etReport(), _currentState};
   StateRequestT req = bleTick(data);
 }
 
@@ -176,7 +180,10 @@ void handleSerialCommand(String command) {
   CommandTypeT type = classifyCommandType(command);
   if (type == CMDType_READ) {
 
-    String readMsg = "0, " + String(temp, 1) + "," + String(temp, 1) + "," +
+    // TC4 READ reply: ambient, ET, BT, heater, fan. ET = MAX31865 probe
+    // (etReport() falls back to BT when no probe / faulted); BT = roaster's
+    // own probe. skywalker.aset maps arduinoETChannel=1, arduinoBTChannel=2.
+    String readMsg = "0," + String(etReport(), 1) + "," + String(temp, 1) + "," +
                      String(_currentState.heater) + "," +
                      String(_currentState.fan) + "\r\n";
     Serial.println(readMsg);
@@ -234,6 +241,10 @@ void webSerialLoop(void *params) {
 void displayLoop(void *params) {
   while (1) {
     lvglLoop();
+    // Same task as the LVGL touch-SPI reads -- keeps the shared touch/ET SPI
+    // bus single-threaded without a lock. Self rate-limited to its own
+    // sampling interval, so this is cheap on most iterations.
+    etSensorTick();
     delay(5);
   }
   vTaskDelete(NULL);

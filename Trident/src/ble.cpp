@@ -96,7 +96,9 @@ void notifyBLEClient(const String &message);
 // HiBean's parser -- reverted that part of an earlier attempt rather than
 // keep an unverified change.
 String buildReadMessage() {
-  return "0," + String(_currentData.temp, 1) + "," +
+  // ambient, ET, BT, heater, fan -- ET is the external MAX31865 probe
+  // (_currentData.et mirrors BT when there's no probe), BT is the roaster's own.
+  return "0," + String(_currentData.et, 1) + "," +
         String(_currentData.temp, 1) + "," +
         String(_currentData.request.heater) + "," +
         String(_currentData.request.fan) + "\r\n";

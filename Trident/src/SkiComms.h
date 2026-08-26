@@ -1,5 +1,6 @@
 #include "dlog.h"
 #include "pindef.h"
+#include "ror.h"
 #include <MedianFilterLib.h>
 #include <cstdint>
 
@@ -308,83 +309,12 @@ double calculateTemp() {
   return v;
 }
 
-// ROR: how fast temp is climbing, in degrees/min. Ported to match Artisan's
-// own default algorithm (artisanlib/canvas.py's compute_ror_simple(),
-// polyfitRoRcalc=false is the default and what skywalker.aset uses) instead
-// of our earlier home-grown "average a bunch of noisy instantaneous
-// slopes over 5s" approach, so the number shown here reads similarly to
-// what Artisan itself will plot from the same temperature stream.
-//
-// Artisan's actual algorithm: one slope between *now* and a point
-// ROR_SPAN_MS ago (skywalker.aset's DeltaSpan/DeltaETspan = 20s -- if that's
-// ever changed in Artisan, update this to match). The "old" end of that
-// slope is smoothed by locally averaging samples within
-// ROR_LEFT_SMOOTH_MS of it -- deliberately *not* averaging the current/new
-// end, so smoothing doesn't add lag to the most recent reading. Artisan
-// does this as a 5-sample average at its own ~2s sampling rate (skywalker
-// .aset's Delay=2000); we sample much faster (~114ms via RMT), so the
-// equivalent is expressed as a time window rather than a fixed sample
-// count.
-#define ROR_SPAN_MS 20000UL
-#define ROR_LEFT_SMOOTH_MS 2000UL
-#define ROR_HISTORY_SIZE 256 // comfortably covers ROR_SPAN_MS at our ~114ms roaster sample rate
-struct TempSample {
-  unsigned long ms;
-  double temp;
-};
-TempSample rorHistory[ROR_HISTORY_SIZE];
-int rorHistoryCount = 0;
-int rorHistoryHead = 0; // index one past the most recently written sample
-
-void updateROR(double newTemp) {
-  unsigned long now = millis();
-
-  rorHistory[rorHistoryHead] = {now, newTemp};
-  rorHistoryHead = (rorHistoryHead + 1) % ROR_HISTORY_SIZE;
-  if (rorHistoryCount < ROR_HISTORY_SIZE) {
-    rorHistoryCount++;
-  }
-
-  // Walk backward from the most recent sample to find the oldest one that's
-  // still within ROR_SPAN_MS -- that's our anchor (Artisan's left_index).
-  int anchorIdx = -1;
-  for (int j = 0; j < rorHistoryCount; j++) {
-    int idx = (rorHistoryHead - 1 - j + ROR_HISTORY_SIZE) % ROR_HISTORY_SIZE;
-    if (now - rorHistory[idx].ms >= ROR_SPAN_MS) {
-      anchorIdx = idx;
-      break;
-    }
-  }
-  if (anchorIdx == -1) {
-    return; // not ROR_SPAN_MS of history yet -- leave ror as its last value
-  }
-
-  double timedSec = (now - rorHistory[anchorIdx].ms) / 1000.0;
-  if (timedSec <= 0) {
-    return;
-  }
-
-  // Local average of samples near the anchor's timestamp (not sample
-  // count, since our sampling rate is much finer than Artisan's).
-  double leftSum = 0.0;
-  int leftN = 0;
-  for (int j = 0; j < rorHistoryCount; j++) {
-    int idx = (rorHistoryHead - 1 - j + ROR_HISTORY_SIZE) % ROR_HISTORY_SIZE;
-    long delta = (long)rorHistory[idx].ms - (long)rorHistory[anchorIdx].ms;
-    if (delta > (long)ROR_LEFT_SMOOTH_MS) {
-      continue; // still newer than the smoothing window, keep scanning back
-    }
-    if (delta < -(long)ROR_LEFT_SMOOTH_MS) {
-      break; // now older than the smoothing window -- everything further back is too
-    }
-    leftSum += rorHistory[idx].temp;
-    leftN++;
-  }
-  double leftAvg = leftN > 0 ? leftSum / leftN : rorHistory[anchorIdx].temp;
-
-  ror = (newTemp - leftAvg) / timedSec * 60.0;
-  D_printf("ROR: %.2f /min (span %.1fs, %d-sample left avg)\n", ror, timedSec, leftN);
-}
+// BT rate-of-rise. The Artisan-matching algorithm this used to spell out
+// inline now lives in RorTracker (ror.h/ror.cpp) so the ET channel
+// (et_sensor.cpp) runs the identical calculation instead of a hand-copied
+// second copy. This instance is BT's; it writes the global `ror` that the
+// dashboard and the rest of the firmware already read.
+RorTracker btRor;
 
 MedianFilter<double> tempFilter(7);
 void filtTemp(double v){
@@ -393,7 +323,7 @@ void filtTemp(double v){
   tempFilter.AddValue(v); //add to the collection
   temp = tempFilter.GetFiltered(); //update global temp
   D_printf("filtered temp: %.2f\n", temp);
-  updateROR(temp);
+  ror = btRor.update(temp);
 }
 
 #ifdef _ROASTER_RX_RMT_

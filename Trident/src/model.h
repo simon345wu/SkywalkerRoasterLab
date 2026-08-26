@@ -23,7 +23,8 @@ typedef struct {
 } StateRequestT;
 
 typedef struct {
-  double temp;
+  double temp; // BT (roaster's own probe)
+  double et;   // ET (external MAX31865 probe, or BT mirrored when none)
   StateRequestT request;
 } StateDataT;
 

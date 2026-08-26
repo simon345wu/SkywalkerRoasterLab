@@ -418,3 +418,30 @@ User reported after the previous round: "你有implement嗎？我沒有看到任
 ### Open items for `lvgl-ui` branch
 - Visually confirm on the physical device: splash text is now actually visible and audibly (visually) fades in, holds, fades out -- not just present in code.
 - Everything else unchanged from the entries above.
+
+## 2026-08-26 — `et-max31865` branch: external ET probe (MAX31865 + PT100)
+
+Branched from `lvgl-ui`. Adds a second, independent temperature channel (ET / exhaust) from an external MAX31865 RTD-to-digital converter + 4-wire PT100 probe. The roaster's own built-in probe still supplies BT over the serial protocol, unchanged.
+
+**Wiring (done by user):** MAX31865 shares the touch controller's SPI bus rather than a new bus — VIN→3V3, GND→GND, SCLK→GPIO42, SDI→GPIO2, SDO→GPIO41 (all shared with XPT2046), CS→**GPIO40** (dedicated, `ET_CS_PIN` in [pindef.h](src/pindef.h), S3 only). Rationale in the chat plan: the touch bus is near-idle vs. the display bus's saturated pixel traffic, and both the touch read and the ET read run on the *same* task (see below), so the shared bus needs no lock.
+
+**New files:**
+- [src/ror.h](src/ror.h) / [src/ror.cpp](src/ror.cpp) — `RorTracker` class. The Artisan-matching ROR algorithm that used to be file-scope globals + `updateROR()` inside [SkiComms.h](src/SkiComms.h) (BT-only), pulled out so BT and ET run the *identical* calculation from separate instances instead of a hand-copied second copy that could drift. BT's instance (`btRor`) lives in SkiComms.h and still writes the global `ror`; ET's lives in et_sensor.cpp.
+- [src/et_sensor.h](src/et_sensor.h) / [src/et_sensor.cpp](src/et_sensor.cpp) — the MAX31865 driver. Deliberately **does not** use the Adafruit_MAX31865 library: its `readRTD()` hard-codes `delay(10)+delay(65)` into every call, which would stall the LVGL/display task ~75ms per sample. Instead: set the config register once for VBIAS-on + continuous auto-convert + 60Hz filter + 4-wire, then each sample is just a 3-byte register read (tens of µs, no blocking). Callendar–Van Dusen conversion math is copied verbatim from that library. 5-wide median filter + a filtTemp()-style sanity gate reject the occasional corrupted SPI read. Exposes `etTemp`, `etRor`, `etSensorHealthy()`, `etReport()`. Non-S3 builds get no-op stubs (`etReport()` returns BT).
+
+**Wired in:**
+- `etSensorInit()` in `setup()` right after `touchInit()` (shares its already-begun `SPI.begin()`); `etSensorTick()` from `displayLoop()` right after `lvglLoop()` — same task as the LVGL touch-SPI reads, so the shared bus stays single-threaded with no mutex. Self-rate-limited to 250ms.
+- **TC4 ET field** now carries the probe. `StateDataT` gained a `double et`; the READ reply builders in [SkiCMD.h](src/SkiCMD.h) `handleREAD()`, [main.cpp](src/main.cpp) `handleSerialCommand()`, [ble.cpp](src/ble.cpp) `buildReadMessage()`, and the WebSocket `root["data"]["ET"]` in [CommandLoop.cpp](src/CommandLoop.cpp) all now send `etReport()` in field 1 (ET) and BT in field 2 — matching `skywalker.aset`'s `arduinoETChannel=1` / `arduinoBTChannel=2`. `etReport()` falls back to mirroring BT when the probe is absent/faulted, so pre-probe behaviour is preserved.
+- **Dashboard ET / ET RoR tiles** (previously hard-coded `"--.-"` placeholders on `lvgl-ui`) now show `etTemp` / `etRor`, or `"--.-"` when `!etSensorHealthy()`. `etLabel`/`etRorLabel` promoted to file-scope statics.
+
+**Hardware bring-up (COM6, 2026-08-26):** flashed, clean boot (all 8 `[LVGL]` checkpoints, no crash/reboot loop). Added temporary USB-serial debug to `etSensorInit()`/`etSensorTick()` to diagnose (removed after).
+- SPI comms confirmed: config register wrote `0xC0`, read back `0xC0`. `fault=0`, `faultstat=0x00` — probe wiring is fine.
+- **Bug found + fixed: `ET_RREF` was 430.0, this board's reference resistor is 4300 ohm.** A room-temp PT100 read `rtd=844` → with RREF=430 that's `Rt=11 ohm` → `-217 C` (garbage, tripped the out-of-range gate → ET stayed `--.-`). With `RREF=4300.0` the same `rtd` gives `Rt=110.7 ohm` → `~28 C` (correct). It's a "PT100/PT1000 universal" red board — 4300 ohm reference so PT1000 doesn't overflow, at the cost of PT100 ADC resolution (~0.35 C/count vs ~0.035 C on a 430 ohm board). Fine for exhaust temp; median-7 filter (bumped from 5, matching BT) damps the raw ~±1 C count jitter.
+- Post-fix: ET reads a stable ~27–29 C at room temp. USB serial re-verified clean (boot ROM + `[LVGL]` only, no `[ET]` contamination of the TC4 stream). **Dashboard ET / ET RoR tiles confirmed displaying correctly on the physical screen.**
+
+**Build:** `pio run -e s3` SUCCESS (RAM 41.7%, Flash 25.1%).
+
+### Open items for `et-max31865` branch
+- Confirm ET shows up in Artisan on the ET curve (TC4/serial and WebSocket paths) during a real session.
+- Sanity-check ET RoR against BT RoR behaviour once there's real probe movement (heat gun / roast).
+- Consider a light moving-average on top of the median if ET still looks jumpy in Artisan (the 4300 ohm-reference resolution hit is the root cause; a 430 ohm-reference board would be the real fix).
