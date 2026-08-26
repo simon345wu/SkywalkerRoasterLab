@@ -28,3 +28,9 @@ bool etSensorHealthy();
 // The value to put in the TC4/Artisan ET field: the real probe when healthy,
 // otherwise BT mirrored.
 double etReport();
+
+// Set the ET smoothing level, 0-100, following Artisan's TC4 FILT convention
+// (the fraction kept from history each step -- higher = smoother and laggier;
+// capped at 99 so it can't freeze). Default 70. Driven by the serial
+// "FILT;<et>;<bt>;..." command; only the ET (first) value is used.
+void etSetFilter(int filtPercent);

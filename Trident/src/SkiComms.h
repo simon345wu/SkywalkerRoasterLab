@@ -316,6 +316,10 @@ double calculateTemp() {
 // dashboard and the rest of the firmware already read.
 RorTracker btRor;
 
+// Window size must stay != 3: MedianFilterLib's window-3 fast path
+// (addValue3) never updates the field GetFiltered() reads, so GetFiltered()
+// would always return 0. Fine at 7; if this is ever lowered to 3, switch to
+// using AddValue()'s return value like et_sensor.cpp does.
 MedianFilter<double> tempFilter(7);
 void filtTemp(double v){
   int maxV = ((CorF == 'F') ? 500 : 260); //pick appropriate max cutoff given C or F units

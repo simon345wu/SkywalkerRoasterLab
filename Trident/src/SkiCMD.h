@@ -265,6 +265,16 @@ void parseAndExecuteCommands(String input) {
   } else if (command == "FILTER") {
     D_println("Setting Filter: " + param);
     handleFILTER(param.toInt()); // Turn on/off filter fan
+  } else if (command == "FILT") {
+    // Artisan TC4 FILT;f1;f2;f3;f4 -- per-physical-channel digital filter
+    // level, 0-100. ET is physical channel 1 (skywalker.aset
+    // arduinoETChannel=1), so the first value drives the ET EMA
+    // (et_sensor.cpp). BT's filtering is fixed (median-7 in filtTemp()) and
+    // the aux channels are unused, so the rest are ignored. "FILT" != the
+    // "FILTER" (filter-fan) command above.
+    String etFilt = subcommand.length() > 0 ? subcommand : param;
+    D_println("Setting ET FILT: " + etFilt);
+    etSetFilter(etFilt.toInt());
   } else if (command == "COOL") {
     D_println("Setting Cool: " + param);
     handleCOOL(param.toInt()); // Cool the beans

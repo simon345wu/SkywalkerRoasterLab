@@ -50,10 +50,20 @@ static const uint8_t CFG_FAULTCLEAR = 0x02;
 static const SPISettings ET_SPI_SETTINGS(1000000, MSBFIRST, SPI_MODE1);
 
 static RorTracker etRorTracker;
-// Median-7, same as BT's tempFilter -- rejects corrupted SPI reads and damps
-// the raw ADC noise (this board's 4300 ohm reference leaves a PT100 using only
-// ~1/10th of the range, so raw counts jitter ~+/-1C; see ET_RREF).
-static MedianFilter<double> etFilter(7);
+
+// Two-stage smoothing: a short median just to drop the odd corrupted SPI read
+// (single-sample spike), then an EMA that does the actual noise damping. The
+// EMA level is Artisan-TC4-FILT-settable at runtime (see etSetFilter()); the
+// median stays fixed and small so it adds almost no lag.
+static MedianFilter<double> etFilter(3);
+
+// EMA: etEma = prevWeight*etEma + (1-prevWeight)*medianOut. prevWeight follows
+// the Artisan TC4 FILT convention -- the fraction kept from history, so higher
+// = smoother and laggier. Default 0.70 (== "FILT;70"); FILT;<n> overrides it.
+static float etEmaPrevWeight = 0.70f;
+static double etEma = 0.0;
+static bool etEmaSeeded = false;
+
 static bool inited = false;
 static bool healthy = false;
 static unsigned long lastSampleMs = 0;
@@ -179,6 +189,7 @@ void etSensorTick() {
     uint8_t fault = etReadReg8(REG_FAULTSTAT);
     etWriteReg8(REG_CONFIG, etCfg | CFG_FAULTCLEAR);
     healthy = false;
+    etEmaSeeded = false; // re-seed on recovery so it snaps, not crawls
     D_printf("[ET] MAX31865 fault 0x%02X\n", fault);
     return;
   }
@@ -191,20 +202,47 @@ void etSensorTick() {
   double maxV = (CorF == 'F') ? 1100.0 : 600.0;
   if (v < -50.0 || v > maxV) {
     healthy = false;
+    etEmaSeeded = false;
     D_printf("[ET] out-of-range reading ignored: %.1f\n", v);
     return;
   }
 
-  etFilter.AddValue(v);
-  etTemp = etFilter.GetFiltered();
+  // Stage 1: short median -> kills a single corrupted SPI read. Must use
+  // AddValue()'s return, NOT GetFiltered(): MedianFilterLib's window-3 fast
+  // path (addValue3) never updates the field GetFiltered() reads, so it would
+  // always return 0 here.
+  double m = etFilter.AddValue(v);
+
+  // Stage 2: EMA -> the actual noise damping, level set by FILT.
+  if (!etEmaSeeded) {
+    etEma = m;
+    etEmaSeeded = true;
+  } else {
+    etEma = etEmaPrevWeight * etEma + (1.0f - etEmaPrevWeight) * m;
+  }
+
+  etTemp = etEma;
   etRor = etRorTracker.update(etTemp);
   healthy = true;
-  D_printf("[ET] %.1f  RoR %.2f\n", etTemp, etRor);
+  D_printf("[ET] %.1f  RoR %.2f  (filt %.2f)\n", etTemp, etRor, etEmaPrevWeight);
 }
 
 bool etSensorHealthy() { return healthy; }
 
 double etReport() { return healthy ? etTemp : temp; }
+
+void etSetFilter(int filtPercent) {
+  // Artisan TC4 FILT convention: 0-100, the fraction kept from history (higher
+  // = smoother/laggier). 100 would freeze the reading, so cap at 99.
+  if (filtPercent < 0) {
+    filtPercent = 0;
+  } else if (filtPercent > 99) {
+    filtPercent = 99;
+  }
+  etEmaPrevWeight = filtPercent / 100.0f;
+  D_printf("[ET] FILT set to %d (EMA prev-weight %.2f)\n", filtPercent,
+           etEmaPrevWeight);
+}
 
 #else // non-S3 builds: no ET probe, ET mirrors BT (pre-sensor behaviour)
 
@@ -213,5 +251,6 @@ void etSensorInit() {}
 void etSensorTick() {}
 bool etSensorHealthy() { return false; }
 double etReport() { return temp; }
+void etSetFilter(int filtPercent) {}
 
 #endif

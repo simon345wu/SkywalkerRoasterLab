@@ -439,9 +439,21 @@ Branched from `lvgl-ui`. Adds a second, independent temperature channel (ET / ex
 - **Bug found + fixed: `ET_RREF` was 430.0, this board's reference resistor is 4300 ohm.** A room-temp PT100 read `rtd=844` → with RREF=430 that's `Rt=11 ohm` → `-217 C` (garbage, tripped the out-of-range gate → ET stayed `--.-`). With `RREF=4300.0` the same `rtd` gives `Rt=110.7 ohm` → `~28 C` (correct). It's a "PT100/PT1000 universal" red board — 4300 ohm reference so PT1000 doesn't overflow, at the cost of PT100 ADC resolution (~0.35 C/count vs ~0.035 C on a 430 ohm board). Fine for exhaust temp; median-7 filter (bumped from 5, matching BT) damps the raw ~±1 C count jitter.
 - Post-fix: ET reads a stable ~27–29 C at room temp. USB serial re-verified clean (boot ROM + `[LVGL]` only, no `[ET]` contamination of the TC4 stream). **Dashboard ET / ET RoR tiles confirmed displaying correctly on the physical screen.**
 
-**Build:** `pio run -e s3` SUCCESS (RAM 41.7%, Flash 25.1%).
+**Build:** `pio run -e s3` SUCCESS (RAM 41.7%, Flash 25.1%). Committed `bc62129`.
+
+### 2026-08-26 (continued) — sample rate + EMA + `FILT` command
+
+- **Sample interval 250ms → 125ms** (commit `6c15711`). 250ms made ET noticeably laggier than BT; 125ms ~matches BT's ~114ms roaster frame rate. Still >> the MAX31865's ~21ms continuous-conversion time.
+- **Two-stage smoothing, EMA level settable via Artisan's `FILT` command** (user request "EMA 移動平均 Default 0.7, TC4 artisan FILT command 可以定義"):
+  - Stage 1: `MedianFilter(3)` — just drops a single corrupted SPI read, minimal lag.
+  - Stage 2: EMA `etEma = w*etEma + (1-w)*medianOut`, `w` = the fraction kept from history (Artisan TC4 `FILT` convention: higher = smoother/laggier). Default `w = 0.70` (== `FILT;70`, matching `skywalker.aset`'s `ArduinoFILT=70,...`).
+  - `FILT;<f1>;<f2>;...` handled in [SkiCMD.h](src/SkiCMD.h) `parseAndExecuteCommands()` — ET is physical channel 1 so the **first** value drives `etSetFilter()` (`et_sensor.cpp`); BT's filter is fixed, aux channels unused, rest ignored. `FILT` was previously an unhandled command (distinct from the roaster's `FILTER` fan command), so nothing else is affected. Capped 0–99 so it can't freeze. Not persisted — Artisan re-sends it every connection.
+  - EMA re-seeds (snaps, doesn't crawl) after a fault / out-of-range recovery.
+- **Bug found + fixed: `MedianFilter` window-3 + `GetFiltered()` always returns 0.** MedianFilterLib's `windowSize == 3` fast path (`addValue3`) never updates the `_lastFiltered` field that `GetFiltered()` reads — so the first ET-with-EMA build read ET as `0.0` (READ replied `0,0.0,30.2,...`). Fixed by using `AddValue()`'s return value directly. BT (`filtTemp()`, window 7) is unaffected — added a warning comment there so nobody lowers it to 3.
+
+**Hardware re-verified (COM6):** `FILT;70;70;70;70` (exact Artisan form), `FILT;<n>`, and `FILT;<n>;<n>;<n>;<n>` all accepted, no crash/reboot. `READ` → `0,30.4,29.7,0,0` (ET from MAX31865 field 1, BT from roaster field 2). Roaster was powered so BT reads real room temp too.
 
 ### Open items for `et-max31865` branch
-- Confirm ET shows up in Artisan on the ET curve (TC4/serial and WebSocket paths) during a real session.
-- Sanity-check ET RoR against BT RoR behaviour once there's real probe movement (heat gun / roast).
-- Consider a light moving-average on top of the median if ET still looks jumpy in Artisan (the 4300 ohm-reference resolution hit is the root cause; a 430 ohm-reference board would be the real fix).
+- Confirm ET shows up in Artisan on the ET curve (TC4/serial and WebSocket paths) during a real session, and that Artisan's `FILT` from the `.aset` takes effect.
+- Sanity-check ET RoR against BT RoR behaviour once there's real probe movement (heat gun / roast); tune the default `FILT` if 70 is too soft/harsh.
+- A 430 ohm-reference board is still the real fix for ET ADC resolution if it ever matters.
