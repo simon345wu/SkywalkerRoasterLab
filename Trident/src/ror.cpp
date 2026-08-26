@@ -15,7 +15,7 @@
 // ROR_LEFT_SMOOTH_MS of it -- deliberately *not* averaging the current/new
 // end, so smoothing doesn't add lag to the most recent reading. Artisan
 // does this as a 5-sample average at its own ~2s sampling rate (skywalker
-// .aset's Delay=2000); we sample much faster (BT ~114ms via RMT, ET ~250ms),
+// .aset's Delay=2000); we sample much faster (BT ~114ms via RMT, ET ~125ms),
 // so the equivalent is expressed as a time window rather than a fixed sample
 // count.
 #define ROR_SPAN_MS 20000UL

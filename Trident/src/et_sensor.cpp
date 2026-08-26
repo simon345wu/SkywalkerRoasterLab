@@ -28,7 +28,11 @@ static const float ET_RREF = 4300.0f;
 static const float ET_RNOMINAL = 100.0f; // PT100 probe
 static const bool ET_THREE_WIRE = false; // 4-wire probe
 
-static const unsigned long ET_SAMPLE_INTERVAL_MS = 250;
+// 125ms ~= BT's ~114ms roaster frame rate, so the median-7 filter below
+// covers roughly the same ~0.9s time window as BT's does (was 250ms, which
+// made ET noticeably laggier than BT). Still well above the MAX31865's ~21ms
+// continuous-conversion time, so every read gets a fresh conversion.
+static const unsigned long ET_SAMPLE_INTERVAL_MS = 125;
 
 // --- MAX31865 registers / config bits (datasheet) --------------------------
 static const uint8_t REG_CONFIG = 0x00;
