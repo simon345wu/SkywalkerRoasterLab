@@ -194,6 +194,7 @@ void displayDashboard(float temp, float ror, uint8_t heat, uint8_t fan,
 #include "ble.h"
 #include "et_sensor.h"
 #include "touch.h"
+#include "wifi_setup.h"
 #include <Preferences.h>
 #include <WiFi.h>
 #include <esp_heap_caps.h>
@@ -631,14 +632,15 @@ static void lvglRefreshCb(lv_timer_t *timer) {
 
   // Same AP/STA-IP text the old (non-LVGL) dashboard showed -- the LED
   // alone tells you "connected or not" at a glance, but Artisan/HiBean
-  // setup needs the actual IP, which a colored dot can't show.
+  // setup needs the actual IP (and now port, e.g. for Artisan's WebSocket
+  // device config), which a colored dot can't show.
   if (WiFi.getMode() == WIFI_AP) {
-    lv_label_set_text_fmt(wifiIpLabel, "AP:%s",
-                          WiFi.softAPIP().toString().c_str());
+    lv_label_set_text_fmt(wifiIpLabel, "AP:%s:%d",
+                          WiFi.softAPIP().toString().c_str(), WEB_SERVER_PORT);
     setLedState(wifiLed, LED_HANDSHAKE);
   } else if (WiFi.status() == WL_CONNECTED) {
-    lv_label_set_text_fmt(wifiIpLabel, "STA:%s",
-                          WiFi.localIP().toString().c_str());
+    lv_label_set_text_fmt(wifiIpLabel, "STA:%s:%d",
+                          WiFi.localIP().toString().c_str(), WEB_SERVER_PORT);
     setLedState(wifiLed, LED_HANDSHAKE);
   } else {
     lv_label_set_text(wifiIpLabel, "--");

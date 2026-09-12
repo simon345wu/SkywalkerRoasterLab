@@ -48,7 +48,7 @@ const unsigned int LED_YELLOW[3] = {0, 128, 128};
 
 typedef enum { booting = 0, connected, disconnected } BloodhoundStateT;
 
-AsyncWebServer server(80);
+AsyncWebServer server(WEB_SERVER_PORT);
 const char rgbLedPin = RGB_PIN;
 // const char ledPin = 15;
 bool isOn = false;
