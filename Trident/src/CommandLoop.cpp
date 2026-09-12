@@ -120,9 +120,15 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
     // webSocket.broadcastTXT("message here");
     enqueueStateRequest(request, SOURCE_WEBSOCKET);
   } break;
-  default: // send message to client
+  case WS_EVT_PING:
+  case WS_EVT_PONG:
+    // WebSocket-level keepalive -- ESPAsyncWebServer already auto-replies to
+    // pings internally regardless of this callback, nothing to do here.
+    // Split out from default so this expected, harmless traffic doesn't get
+    // logged as "unhandled" (it was, confusingly, before -- see PROGRESS.md).
+    break;
+  default:
     D_printf(LOG_WS, "unhandled message type: %d\n", type);
-    // webSocket.sendBIN(num, payload, length);
     break;
   }
 }
