@@ -167,8 +167,8 @@ void etSensorInit() {
   // Config readback confirms SPI comms (checked on hardware 2026-08-26:
   // wrote 0xC0, read back 0xC0). Kept on WebSerial only -- anything on the USB
   // Serial here would contaminate Artisan's TC4 stream.
-  D_printf("[ET] MAX31865 init: cfg wrote 0x%02X, readback 0x%02X\n", etCfg,
-           etReadReg8(REG_CONFIG));
+  D_printf(LOG_ET, "[ET] MAX31865 init: cfg wrote 0x%02X, readback 0x%02X\n",
+           etCfg, etReadReg8(REG_CONFIG));
 }
 
 void etSensorTick() {
@@ -190,7 +190,7 @@ void etSensorTick() {
     etWriteReg8(REG_CONFIG, etCfg | CFG_FAULTCLEAR);
     healthy = false;
     etEmaSeeded = false; // re-seed on recovery so it snaps, not crawls
-    D_printf("[ET] MAX31865 fault 0x%02X\n", fault);
+    D_printf(LOG_ET, "[ET] MAX31865 fault 0x%02X\n", fault);
     return;
   }
 
@@ -203,7 +203,7 @@ void etSensorTick() {
   if (v < -50.0 || v > maxV) {
     healthy = false;
     etEmaSeeded = false;
-    D_printf("[ET] out-of-range reading ignored: %.1f\n", v);
+    D_printf(LOG_ET, "[ET] out-of-range reading ignored: %.1f\n", v);
     return;
   }
 
@@ -224,7 +224,8 @@ void etSensorTick() {
   etTemp = etEma;
   etRor = etRorTracker.update(etTemp);
   healthy = true;
-  D_printf("[ET] %.1f  RoR %.2f  (filt %.2f)\n", etTemp, etRor, etEmaPrevWeight);
+  D_printf(LOG_ET, "[ET] %.1f  RoR %.2f  (filt %.2f)\n", etTemp, etRor,
+           etEmaPrevWeight);
 }
 
 bool etSensorHealthy() { return healthy; }
@@ -240,7 +241,7 @@ void etSetFilter(int filtPercent) {
     filtPercent = 99;
   }
   etEmaPrevWeight = filtPercent / 100.0f;
-  D_printf("[ET] FILT set to %d (EMA prev-weight %.2f)\n", filtPercent,
+  D_printf(LOG_ET, "[ET] FILT set to %d (EMA prev-weight %.2f)\n", filtPercent,
            etEmaPrevWeight);
 }
 

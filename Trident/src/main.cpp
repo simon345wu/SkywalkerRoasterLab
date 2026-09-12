@@ -79,6 +79,7 @@ bool artisanHandshakeDone = false;
 static int droppedVprintf(const char *fmt, va_list args) { return 0; }
 
 void setup() {
+  logInit(); // WebSerial log-category defaults; before anything else logs
   esp_log_set_vprintf(droppedVprintf);
   Serial.begin(115200);
 #ifdef S3
@@ -105,6 +106,14 @@ void setup() {
 
   WebSerial.onMessage([](uint8_t *data, size_t len) {
     String input = String(data, len);
+    // "LOG;..." is a WebSerial-console-only debug control (which message
+    // categories print, see dlog.h) -- deliberately kept out of
+    // parseAndExecuteCommands() so it can never be confused with a TC4/
+    // Artisan command, even though only this console (not USB serial) can
+    // actually reach this callback.
+    if (logHandleCommand(input)) {
+      return;
+    }
     parseAndExecuteCommands(input);
   });
   setupMainLoop(&server);
@@ -267,7 +276,7 @@ void displayLoop(void *params) {
 void loop() {
   // roaster shut down, clear our buffers
   if (itsbeentoolong()) {
-    D_println("too long, shutting down");
+    D_println(LOG_SYS, "too long, shutting down");
     shutdown();
   }
 

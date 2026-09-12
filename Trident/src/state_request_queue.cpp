@@ -26,7 +26,7 @@ static StateRequestT targetState = {0, 0, 0, 0, ""};
 void initStateQueue() {
   stateQueueMutex = xSemaphoreCreateMutex();
   if (stateQueueMutex == NULL) {
-    D_println("Failed to create state queue mutex!");
+    D_println(LOG_QUEUE, "Failed to create state queue mutex!");
     return;
   }
 }
@@ -97,8 +97,10 @@ void applyStateRequest(StateRequestT req, StateSourceT source) {
 		parseAndExecuteCommands(req.pidCommand);
 	}
 
-  D_printf("Applied request from source %d: H=%d F=%d D=%d C=%d PID=%s\n", source,
-           req.heater, req.fan, req.drum, req.cooling, req.pidCommand.c_str());
+  D_printf(LOG_QUEUE,
+           "Applied request from source %d: H=%d F=%d D=%d C=%d PID=%s\n",
+           source, req.heater, req.fan, req.drum, req.cooling,
+           req.pidCommand.c_str());
 }
 
 StateRequestT getCurrentState() {

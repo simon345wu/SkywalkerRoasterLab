@@ -82,7 +82,7 @@ void handleTouch(int screenX, int screenY) {
     sendCool(current.cooling != 0 ? 0 : 100);
   } else if (pointInRect(screenX, screenY, BTN_STOP_X, BTN_STOP_Y,
                           BTN_STOP_WIDTH, BTN_STOP_HEIGHT)) {
-    D_println("Touch: STOP pressed");
+    D_println(LOG_TOUCH, "Touch: STOP pressed");
     sendStop();
   }
 }

@@ -457,3 +457,35 @@ Branched from `lvgl-ui`. Adds a second, independent temperature channel (ET / ex
 - Confirm ET shows up in Artisan on the ET curve (TC4/serial and WebSocket paths) during a real session, and that Artisan's `FILT` from the `.aset` takes effect.
 - Sanity-check ET RoR against BT RoR behaviour once there's real probe movement (heat gun / roast); tune the default `FILT` if 70 is too soft/harsh.
 - A 430 ohm-reference board is still the real fix for ET ADC resolution if it ever matters.
+
+## 2026-09-12 — WebSerial debugging fixes + categorized logging
+
+Session started from "webserial 如果要做 debug 的話，我在哪邊修改那個他一直顯示 READ 跳動太快" and grew into three fixes plus a proper logging system, each verified on hardware (COM6→COM9, the board's CH340 renumbered mid-session after a real USB drop -- confirmed via `pio device list`/`Get-PnpDevice`, not a software issue, resolved by replugging).
+
+**Fix 1 (`03286ca`):** `handleREAD()` (SkiCMD.h) printed its built message on every call, and `webSocketLoop()` (main.cpp) called `handleREAD()` unconditionally from the ~1ms `webSerialLoop` task -- ~1000 "READ Output:" lines/sec into WebSerial regardless of whether Artisan sent a real READ. Print removed (kept as a comment, not migrated to the category system below -- see the "restore" note further down).
+
+**Fix 2 (`1ca7db0`):** Same shape of bug in `ror.cpp`'s `RorTracker::update()` -- shared by BT and ET, ~17 lines/sec combined once each had 20s of history. Also just commented out at the time (later restored under `LOG_ROR`, see below).
+
+**Fix 3 (`2a7a241`) -- the important one:** with a WebSerial browser tab left open (confirmed by user) and its per-client message queue backing up, ESPAsyncWebServer's internal `log_e()` ("too many messages queued: discarding new message") fired ~30/sec and **visibly corrupted the physical Serial/UART0 stream** (garbled, doubled-up characters) -- this is the previously-known-but-unfixed `esp_idf_log_contaminates_serial` issue, now reproduced and root-caused. `log_e()`/ESP-IDF logging writes straight to `Serial` by default, the same port Artisan's TC4 protocol lives on. Fixed with `esp_log_set_vprintf()` installed as the very first thing `setup()` does, routing all IDF log output to a no-op sink -- dropped, not rerouted to WebSerial, since WebSerial has the identical queue-backpressure problem and could just relocate the corruption there. Verified: 35s capture with the same tab still open, zero `log_e`/`_queueMessage` lines (was ~30/sec).
+
+### Categorized WebSerial logging (user: "希望它能夠做 message 分類，可以允許或不允許哪些類的訊息顯示，可以透過 web serial command 來改變這些選擇")
+
+Planned first (2 clarifying questions via AskUserQuestion, both resolved to the recommended option), then implemented:
+
+- **[src/dlog.h](src/dlog.h) / [src/dlog.cpp](src/dlog.cpp)** replaced the old flat macros (`D_println`/`D_print`/`D_printf` → straight to `WebSerial`) with category-tagged functions. `LogCategory` enum: `SYS, WIFI, BLE, WS, ROASTER, ET, ROR, CMD, PID, TOUCH, QUEUE` -- derived from an actual inventory of every existing call site (~70, across 11 files), not guessed. Every call site now takes a leading category, e.g. `D_printf(LOG_ET, "...")` -- the compiler enforced completeness (old macro signature gone, so nothing could be silently missed).
+- **Defaults, not persisted:** `ROASTER`, `ET`, `ROR` (the three high-frequency, per-sample categories) start OFF; everything else (event-driven) starts ON. Resets to this every boot -- deliberately not saved to NVS, per user's choice, to avoid "silenced three days ago, forgot" confusion.
+- **Command, WebSerial-console-only** (user's other choice, over folding it into `parseAndExecuteCommands()` like `FILT`): `main.cpp`'s `WebSerial.onMessage()` calls `logHandleCommand(input)` first; if it returns true (input was a `LOG` command) it's fully handled and `parseAndExecuteCommands()` is skipped. USB serial (Artisan) never reaches this handler at all, so `LOG` can never be confused with a TC4 command -- confirmed on hardware: sending `LOG` over USB serial does nothing (as intended), `CHAN`/`READ`/`FILT` over USB serial are unaffected.
+  ```
+  LOG                -> list every category's ON/OFF state
+  LOG;ET;ON / OFF    -> toggle one category
+  LOG;ALL;ON / OFF   -> toggle all at once
+  ```
+  `logPrintStatus()`'s own output is unfiltered (bypasses the category check entirely) so turning things off can never hide how to turn them back on.
+- **Restored, not just deleted:** Fix 1 and Fix 2's silenced prints are back, but gated -- `ror.cpp`'s ROR line is now `LOG_ROR` (default off, `LOG;ROR;ON` to watch it). `handleREAD()`'s (SkiCMD.h) print was deliberately **left commented out, not restored** under any category: the real bug (`webSocketLoop()` calling it unconditionally at ~1kHz) is still there, and restoring it under a default-on category like `LOG_CMD` would silently reflood WebSerial by default the moment someone boots the firmware. Flagged as an open item below instead of quietly reintroducing the original problem.
+
+**Verified on hardware (COM9):** clean boot after the full migration; `CHAN`/`READ`/`FILT;70` over USB serial all still work identically (`READ` → `0,29.3,28.7,0,0`); `LOG` sent over USB serial correctly does nothing. The `LOG;...` command itself was reviewed against WebSerial's actual client protocol (a binary "WSL" framing, not plain text -- confirmed in the library source) rather than hardware-tested end-to-end, since faking that framing from a script wasn't worth it with a real browser tab already open -- **still needs the user to type `LOG` / `LOG;ET;ON` into their live WebSerial console to confirm.**
+
+### Open items
+- User to confirm `LOG` / `LOG;<CATEGORY>;ON|OFF` actually work from the real WebSerial browser console.
+- `webSocketLoop()` calling `handleREAD()` unconditionally every ~1ms (main.cpp) is still there -- harmless now that its debug print is gone, but worth fixing properly at some point (it only exists to update `lastEventTime` for the 10s watchdog; the built message and print are otherwise unused there).
+- All the `et-max31865` branch open items above are still open.

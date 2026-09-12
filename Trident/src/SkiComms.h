@@ -95,7 +95,7 @@ void initRoasterTxRMT() {
   txCfg.mem_block_symbols = 64;  // one frame is 1+48=49 symbols < 64
   txCfg.trans_queue_depth = 4;
   if (rmt_new_tx_channel(&txCfg, &roasterTxChan) != ESP_OK) {
-    D_println("[RMT] roaster TX channel init failed");
+    D_println(LOG_ROASTER, "[RMT] roaster TX channel init failed");
     return;
   }
   rmt_copy_encoder_config_t encCfg = {};
@@ -215,7 +215,7 @@ void initRoasterRMT() {
   chCfg.resolution_hz = 1000000; // 1 tick = 1us
   chCfg.mem_block_symbols = RMT_MAXSYM;
   if (rmt_new_rx_channel(&chCfg, &roasterRxChan) != ESP_OK) {
-    D_println("[RMT] roaster RX channel init failed");
+    D_println(LOG_ROASTER, "[RMT] roaster RX channel init failed");
     return;
   }
   rmt_rx_event_callbacks_t cbs = {};
@@ -248,7 +248,7 @@ void watchRoasterStart() {
 }
 
 void getMessage(int bytes, int pin) {
-  D_println("getting message from roaster");
+  D_println(LOG_ROASTER, "getting message from roaster");
   unsigned long timeIntervals[ROASTER_LENGTH * 8];
   unsigned long pulseDuration = 0;
   int bits = bytes * 8;
@@ -278,13 +278,14 @@ bool calculateRoasterChecksum() {
     sum += receiveBuffer[i];
   }
 	bool valid = (sum == receiveBuffer[ROASTER_LENGTH - 1]);
-	D_printf("checksum: %d, buf: %d, match: %d\n", sum, receiveBuffer[ROASTER_LENGTH - 1], valid);
+	D_printf(LOG_ROASTER, "checksum: %d, buf: %d, match: %d\n", sum,
+	         receiveBuffer[ROASTER_LENGTH - 1], valid);
 	if (1) {
-    D_printf("Buffer: ");
+    D_printf(LOG_ROASTER, "Buffer: ");
     for (int i = 0; i < ROASTER_LENGTH; i++) {
-      D_printf("%02X ", receiveBuffer[i]);
+      D_printf(LOG_ROASTER, "%02X ", receiveBuffer[i]);
     }
-    D_printf("\n");
+    D_printf(LOG_ROASTER, "\n");
   }
   return valid;
 }
@@ -326,7 +327,7 @@ void filtTemp(double v){
   if(v < 0 || v > maxV) { return; } //don't process blatantly bogus values
   tempFilter.AddValue(v); //add to the collection
   temp = tempFilter.GetFiltered(); //update global temp
-  D_printf("filtered temp: %.2f\n", temp);
+  D_printf(LOG_ROASTER, "filtered temp: %.2f\n", temp);
   ror = btRor.update(temp);
 }
 
@@ -347,7 +348,7 @@ void extern getRoasterMessage() {
 
   int bits = decodeRoasterFrame(local, n);
   if (bits < ROASTER_LENGTH * 8 || !calculateRoasterChecksum()) {
-    D_println("Not valid roaster message.");
+    D_println(LOG_ROASTER, "Not valid roaster message.");
     return;
   }
   filtTemp(calculateTemp());
@@ -360,7 +361,7 @@ void extern getRoasterMessage() {
     // Valid checksum, compute temperature with filtering
     filtTemp(calculateTemp());
   } else {
-    D_println("Not valid roaster message.");
+    D_println(LOG_ROASTER, "Not valid roaster message.");
   }
 }
 #endif // _ROASTER_RX_RMT_

@@ -24,7 +24,7 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
 
   switch (type) {
   case WS_EVT_CONNECT: {
-    D_printf("[%u] Connected!\n", client->id());
+    D_printf(LOG_WS, "[%u] Connected!\n", client->id());
     // Artisan's own "ON" event action is unreliable over WebSocket (races
     // its device connection setup, see PROGRESS.md) so the drum is started
     // here instead, directly on socket connect, rather than depending on
@@ -33,7 +33,7 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
     enqueueStateRequest(onConnectReq, SOURCE_WEBSOCKET);
   } break;
   case WS_EVT_DISCONNECT: {
-    D_printf("[%u] Disconnected!\n", client->id());
+    D_printf(LOG_WS, "[%u] Disconnected!\n", client->id());
     wsHandshakeDone = false;
     // turn off heater and set fan to 100%
     // setHeaterPower(0);
@@ -43,9 +43,10 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
 
     AwsFrameInfo *info = (AwsFrameInfo *)arg;
 #ifdef DEBUG
-    D_printf("ws[%s][%u] %s-message[%llu]: ", server->url(), client->id(),
-             (info->opcode == WS_TEXT) ? "text" : "binary", info->len);
-    D_printf("final: %d\n", info->final);
+    D_printf(LOG_WS, "ws[%s][%u] %s-message[%llu]: ", server->url(),
+             client->id(), (info->opcode == WS_TEXT) ? "text" : "binary",
+             info->len);
+    D_printf(LOG_WS, "final: %d\n", info->final);
 #endif
     String msg = "";
     /*if (info->opcode != WS_TEXT || !info->final) {*/
@@ -56,7 +57,7 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
       msg += (char)data[i];
     }
 #ifdef DEBUG
-    D_printf("msg: %s\n", msg.c_str());
+    D_printf(LOG_WS, "msg: %s\n", msg.c_str());
 #endif
 
     JsonDocument doc;
@@ -73,23 +74,23 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
     // Get BurnerVal from Artisan over Websocket
     if (!doc["BurnerVal"].isNull()) {
       unsigned char val = doc["BurnerVal"].as<unsigned char>();
-      D_printf("BurnerVal: %d\n", val);
+      D_printf(LOG_WS, "BurnerVal: %d\n", val);
       // DimmerVal = doc["BurnerVal"].as<long>();
       request.heater = val;
     }
     if (!doc["FanVal"].isNull()) {
       unsigned char val = doc["FanVal"].as<unsigned char>();
-      D_printf("FanVal: %d\n", val);
+      D_printf(LOG_WS, "FanVal: %d\n", val);
       request.fan = val;
     }
     if (!doc["Drum"].isNull()) {
       unsigned char val = doc["Drum"].as<unsigned char>();
-      D_printf("Drum: %d\n", val);
+      D_printf(LOG_WS, "Drum: %d\n", val);
       request.drum = val;
     }
     if (!doc["Cooling"].isNull()) {
       unsigned char val = doc["Cooling"].as<unsigned char>();
-      D_printf("Cooling: %d\n", val);
+      D_printf(LOG_WS, "Cooling: %d\n", val);
       request.cooling = val;
     }
 
@@ -120,7 +121,7 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
     enqueueStateRequest(request, SOURCE_WEBSOCKET);
   } break;
   default: // send message to client
-    D_printf("unhandled message type: %d\n", type);
+    D_printf(LOG_WS, "unhandled message type: %d\n", type);
     // webSocket.sendBIN(num, payload, length);
     break;
   }

@@ -42,13 +42,13 @@ void connectToWifi() {
   int wifiCounter = 0;
   while (WiFi.status() != WL_CONNECTED) {
     if (WiFi.status() == WL_CONNECT_FAILED) {
-      D_println("Connect failed, restoring AP");
+      D_println(LOG_WIFI, "Connect failed, restoring AP");
       setupAP();
       break;
     }
     wifiCounter++;
     delay(1000);
-    D_println(".");
+    D_println(LOG_WIFI, ".");
     if (wifiCounter > 10) {
       WiFi.disconnect(true);
       delay(100);
@@ -56,11 +56,11 @@ void connectToWifi() {
       break;
     }
   }
-  D_println("");
-  D_println("Connected to ");
-  D_println(WiFi.SSID().c_str());
-  D_println("IP address: ");
-  D_println(WiFi.localIP().toString().c_str());
+  D_println(LOG_WIFI, "");
+  D_println(LOG_WIFI, "Connected to ");
+  D_println(LOG_WIFI, WiFi.SSID().c_str());
+  D_println(LOG_WIFI, "IP address: ");
+  D_println(LOG_WIFI, WiFi.localIP().toString().c_str());
 }
 
 void setupWifi() {
@@ -74,15 +74,15 @@ void setupWifi() {
   WiFi.setHostname(hostname);
 
   if (params.hasCredentials()) {
-    D_println("trying to connect to wifi");
+    D_println(LOG_WIFI, "trying to connect to wifi");
     connectToWifi();
   } else {
-    D_println("no wifi data found, setting up AP");
+    D_println(LOG_WIFI, "no wifi data found, setting up AP");
     setupAP();
   }
 
   if (!MDNS.begin("trident")) {
-    D_println("could not set up MDNS responder");
+    D_println(LOG_WIFI, "could not set up MDNS responder");
   }
 }
 

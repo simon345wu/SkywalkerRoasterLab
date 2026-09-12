@@ -143,13 +143,13 @@ class MyServerCallbacks : public NimBLEServerCallbacks {
     // https://docs.silabs.com/bluetooth/4.0/bluetooth-miscellaneous-mobile/selecting-suitable-connection-parameters-for-apple-devices
     pServer->updateConnParams(connInfo.getConnHandle(), 12, 24, 4, 500);
 
-    D_println("BLE: Client connected.");
+    D_println(LOG_BLE, "BLE: Client connected.");
   }
   void onDisconnect(NimBLEServer *pServer, NimBLEConnInfo &connInfo,
                     int reason) override {
     deviceConnected = false;
     hibeanHandshakeDone = false;
-    D_println("BLE: Client disconnected. Restarting advertising...");
+    D_println(LOG_BLE, "BLE: Client disconnected. Restarting advertising...");
     pServer->getAdvertising()->start();
   }
 };
@@ -164,8 +164,8 @@ class MyCallbacks : public NimBLECharacteristicCallbacks {
 
     if (rxValue.length() > 0) {
       String input = String(rxValue.c_str());
-      D_print("BLE Write Received: ");
-      D_println(input);
+      D_print(LOG_BLE, "BLE Write Received: ");
+      D_println(LOG_BLE, input);
       CommandTypeT type = classifyCommandType(input);
       if (type == CMDType_READ) {
         notifyBLEClient(buildReadMessage());
@@ -173,7 +173,7 @@ class MyCallbacks : public NimBLECharacteristicCallbacks {
       }
       if (type == CMDType_CHAN) {
         String message = "# Active channels set to 2100\r\n";
-        D_println(message);
+        D_println(LOG_BLE, message);
         notifyBLEClient(message);
         hibeanHandshakeDone = true;
       }
@@ -194,8 +194,8 @@ public:
   explicit LoggingReadCallbacks(const char *label) : _label(label) {}
   void onRead(NimBLECharacteristic *pCharacteristic,
              NimBLEConnInfo &connInfo) override {
-    D_print("BLE GATT READ: ");
-    D_println(_label);
+    D_print(LOG_BLE, "BLE GATT READ: ");
+    D_println(LOG_BLE, _label);
   }
 
 private:
@@ -224,7 +224,7 @@ class PIDTuneCallback : public NimBLECharacteristicCallbacks {
     Ki = pidTune[1];
     Kd = pidTune[2];
     myPID.SetTunings(Kp, Ki, Kd, pMode);
-    D_printf("BLE PID_TUNE: Kp=%.2f Ki=%.2f Kd=%.2f\n", Kp, Ki, Kd);
+    D_printf(LOG_PID, "BLE PID_TUNE: Kp=%.2f Ki=%.2f Kd=%.2f\n", Kp, Ki, Kd);
   }
   void onRead(NimBLECharacteristic *pCharacteristic,
              NimBLEConnInfo &connInfo) override {
@@ -238,7 +238,7 @@ class PIDModeCallback : public NimBLECharacteristicCallbacks {
     String rxValue = String(pCharacteristic->getValue().c_str());
     pMode = (rxValue == "P_ON_E") ? P_ON_E : P_ON_M;
     myPID.SetTunings(Kp, Ki, Kd, pMode);
-    D_println("BLE PID_MODE: " + rxValue);
+    D_println(LOG_PID, "BLE PID_MODE: " + rxValue);
   }
   void onRead(NimBLECharacteristic *pCharacteristic,
              NimBLEConnInfo &connInfo) override {
@@ -254,7 +254,7 @@ class PIDSampleTimeCallback : public NimBLECharacteristicCallbacks {
     if (newSampleTime > 0) {
       pSampleTime = newSampleTime;
       myPID.SetSampleTime(pSampleTime);
-      D_println("BLE PID_SAMPLE_TIME: " + rxValue);
+      D_println(LOG_PID, "BLE PID_SAMPLE_TIME: " + rxValue);
     }
   }
   void onRead(NimBLECharacteristic *pCharacteristic,
@@ -271,7 +271,7 @@ class PIDMaxPowerCallback : public NimBLECharacteristicCallbacks {
     if (newMax >= 0 && newMax <= 100) {
       pidMaxPower = newMax;
       myPID.SetOutputLimits(0, pidMaxPower);
-      D_println("BLE PID_MAX_POWER: " + rxValue);
+      D_println(LOG_PID, "BLE PID_MAX_POWER: " + rxValue);
     }
   }
   void onRead(NimBLECharacteristic *pCharacteristic,
@@ -281,7 +281,7 @@ class PIDMaxPowerCallback : public NimBLECharacteristicCallbacks {
 };
 
 void notifyBLEClient(const String &message) {
-  D_println("Attempting to notify BLE client with: " + message);
+  D_println(LOG_BLE, "Attempting to notify BLE client with: " + message);
 
   if (deviceConnected && pTxCharacteristic) {
     // Matches the official firmware's notifyNimBLEClient() exactly -- its
@@ -292,9 +292,10 @@ void notifyBLEClient(const String &message) {
     delay(30);
     pTxCharacteristic->setValue(message.c_str());
     pTxCharacteristic->notify();
-    D_println("Notification sent successfully.");
+    D_println(LOG_BLE, "Notification sent successfully.");
   } else {
-    D_println("Notification failed. Device not connected or TX characteristic "
+    D_println(LOG_BLE,
+              "Notification failed. Device not connected or TX characteristic "
               "unavailable.");
   }
 }
@@ -386,5 +387,5 @@ void initBLE(String sketchName, String firmWareVersion, String boardID) {
   pAdvertising->setName(std::string(boardID.c_str()));
   pAdvertising->start();
 
-  D_println("BLE Advertising started...");
+  D_println(LOG_BLE, "BLE Advertising started...");
 }

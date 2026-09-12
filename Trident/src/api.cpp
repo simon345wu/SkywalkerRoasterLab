@@ -4,7 +4,7 @@
 #include <Preferences.h>
 
 void setupApi(AsyncWebServer *server) {
-  D_println("setting up api");
+  D_println(LOG_WIFI, "setting up api");
   server->on("/api/wifi", HTTP_GET, [](AsyncWebServerRequest *request) {
     if (!request->hasParam("ssid") || !request->hasParam("pass")) {
       AsyncWebServerResponse *response = request->beginResponse(400);
@@ -19,7 +19,7 @@ void setupApi(AsyncWebServer *server) {
     prefs.begin(wifiPrefsKey, false);
     prefs.putString(wifiSSIDKey, ssid);
     prefs.putString(wifiPassKey, pass);
-    D_printf("saving to prefs, ssid: %s\n", ssid);
+    D_printf(LOG_WIFI, "saving to prefs, ssid: %s\n", ssid);
 
     prefs.end();
     request->send(200);

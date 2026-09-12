@@ -69,7 +69,7 @@ void shutdown() {
 // -----------------------------------------------------------------------------
 void handleCHAN() {
   String message = "# Active channels set to 2100\r\n";
-  D_println(message);
+  D_println(LOG_CMD, message);
   // notifyBLEClient(message);
 }
 
@@ -146,7 +146,7 @@ void handleCOOL(uint8_t value) {
 }
 
 void eStop() {
-  D_println("Emergency Stop Activated! Heater OFF, Vent 100%");
+  D_println(LOG_CMD, "Emergency Stop Activated! Heater OFF, Vent 100%");
   handleHEAT(0);   // Turn off heater
   handleVENT(100); // Set vent to 100%
 }
@@ -167,12 +167,12 @@ void handlePIDControl() {
 void setPIDMode(bool usePID) {
   if (usePID) {
     myPID.SetMode(AUTOMATIC); // Enable PID
-    D_println("PID mode set to AUTOMATIC");
+    D_println(LOG_PID, "PID mode set to AUTOMATIC");
   } else {
     myPID.SetMode(MANUAL);       // Disable PID
     manualHeatLevel = 0;         // Set heat to 0% for safety
     handleHEAT(manualHeatLevel); // Apply the change immediately
-    D_println("PID mode set to MANUAL");
+    D_println(LOG_PID, "PID mode set to MANUAL");
   }
 }
 
@@ -211,8 +211,8 @@ void parseAndExecuteCommands(String input) {
       double newSetpoint = param.toDouble();
       if (newSetpoint > 0 && newSetpoint <= 300) { // Example range check
         pSetpoint = newSetpoint;
-        D_print("New Setpoint: ");
-        D_println(pSetpoint);
+        D_print(LOG_PID, "New Setpoint: ");
+        D_println(LOG_PID, pSetpoint);
       }
     } else if (subcommand == "T") {
       double pidTune[3]; // pp.p;ii.i;dd.d
@@ -229,17 +229,17 @@ void parseAndExecuteCommands(String input) {
         }
       }
       Kp, Ki, Kd = pidTune[0], pidTune[1], pidTune[2];
-      D_print("Kp: ");
-      D_println(Kp);
-      D_print("Ki: ");
-      D_println(Ki);
-      D_print("Kd: ");
-      D_println(Kd);
+      D_print(LOG_PID, "Kp: ");
+      D_println(LOG_PID, Kp);
+      D_print(LOG_PID, "Ki: ");
+      D_println(LOG_PID, Ki);
+      D_print(LOG_PID, "Kd: ");
+      D_println(LOG_PID, Kd);
       myPID.SetTunings(Kp, Ki, Kd,
                        pMode); // apply the pid params to running config
     } else if (subcommand == "PM") {
-      D_print("Setting PMode to: ");
-      D_println(param);
+      D_print(LOG_PID, "Setting PMode to: ");
+      D_println(LOG_PID, param);
       if (param == "M") {
         pMode = P_ON_M;
         myPID.SetTunings(Kp, Ki, Kd,
@@ -250,27 +250,27 @@ void parseAndExecuteCommands(String input) {
                          pMode); // apply the pid params to running config
       }
     } else if (subcommand == "CT") {
-      D_print("Setting Cycle Time to: ");
-      D_println(param.toDouble());
+      D_print(LOG_PID, "Setting Cycle Time to: ");
+      D_println(LOG_PID, param.toDouble());
       myPID.SetSampleTime(pSampleTime);
     }
   } else if (command == "OT1") {
-    D_println("Setting OT1: " + param);
+    D_println(LOG_CMD, "Setting OT1: " + param);
     handleOT1(param.toInt()); // Manual heater control (only in MANUAL mode)
   } else if (command == "READ") {
     handleREAD();
   } else if (command == "OT2") {
-    D_println("Setting OT2: " + param);
+    D_println(LOG_CMD, "Setting OT2: " + param);
     handleVENT(param.toInt()); // Set fan duty
   } else if (command == "OFF") {
     shutdown(); // Shut down system
   } else if (command == "ESTOP") {
     eStop(); // Emergency stop (heater = 0, vent = 100)
   } else if (command == "DRUM") {
-    D_println("Setting Drum: " + param);
+    D_println(LOG_CMD, "Setting Drum: " + param);
     handleDRUM(param.toInt()); // Start/stop the drum
   } else if (command == "FILTER") {
-    D_println("Setting Filter: " + param);
+    D_println(LOG_CMD, "Setting Filter: " + param);
     handleFILTER(param.toInt()); // Turn on/off filter fan
   } else if (command == "FILT") {
     // Artisan TC4 FILT;f1;f2;f3;f4 -- per-physical-channel digital filter
@@ -280,10 +280,10 @@ void parseAndExecuteCommands(String input) {
     // the aux channels are unused, so the rest are ignored. "FILT" != the
     // "FILTER" (filter-fan) command above.
     String etFilt = subcommand.length() > 0 ? subcommand : param;
-    D_println("Setting ET FILT: " + etFilt);
+    D_println(LOG_CMD, "Setting ET FILT: " + etFilt);
     etSetFilter(etFilt.toInt());
   } else if (command == "COOL") {
-    D_println("Setting Cool: " + param);
+    D_println(LOG_CMD, "Setting Cool: " + param);
     handleCOOL(param.toInt()); // Cool the beans
   } else if (command == "CHAN") {
     handleCHAN(); // Handle TC4 init message
