@@ -42,12 +42,16 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
   case WS_EVT_DATA: {
 
     AwsFrameInfo *info = (AwsFrameInfo *)arg;
-#ifdef DEBUG
+    // Was gated behind #ifdef DEBUG, a build flag that's never actually
+    // defined anywhere in platformio.ini -- these two lines were dead code,
+    // silently compiled out, in every build this firmware has ever shipped.
+    // Now gated by LOG_WS instead (see dlog.h) like everything else here, so
+    // "LOG;WS;ON" from the WebSerial console actually shows the raw frame.
     D_printf(LOG_WS, "ws[%s][%u] %s-message[%llu]: ", server->url(),
              client->id(), (info->opcode == WS_TEXT) ? "text" : "binary",
              info->len);
     D_printf(LOG_WS, "final: %d\n", info->final);
-#endif
+
     String msg = "";
     /*if (info->opcode != WS_TEXT || !info->final) {*/
     /*  break;*/
@@ -56,19 +60,23 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
     for (size_t i = 0; i < info->len; i++) {
       msg += (char)data[i];
     }
-#ifdef DEBUG
     D_printf(LOG_WS, "msg: %s\n", msg.c_str());
-#endif
 
     JsonDocument doc;
-
-    // DEBUG WEBSOCKET
-    // D_printf("[%u] get Text: %s\n", num, payload);
 
     // Extract Values lt. https://arduinojson.org/v6/example/http-client/
     // Artisan Anleitung: https://artisan-scope.org/devices/websockets/
 
-    deserializeJson(doc, msg);
+    DeserializationError jsonErr = deserializeJson(doc, msg);
+    if (jsonErr) {
+      // Previously silent: a malformed/unexpected payload here left doc
+      // empty, so every doc["..."].isNull() check below was quietly true
+      // and nothing happened -- indistinguishable from "nothing arrived" at
+      // all without this.
+      D_printf(LOG_WS, "JSON parse failed (%s): %s\n", jsonErr.c_str(),
+               msg.c_str());
+      break;
+    }
 
     long ln_id = doc["id"].as<long>();
     // Get BurnerVal from Artisan over Websocket
