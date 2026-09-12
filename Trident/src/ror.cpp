@@ -74,7 +74,11 @@ double RorTracker::update(double newTemp) {
   double leftAvg = leftN > 0 ? leftSum / leftN : _hist[anchorIdx].temp;
 
   _ror = (newTemp - leftAvg) / timedSec * 60.0;
-  D_printf("ROR: %.2f /min (span %.1fs, %d-sample left avg)\n", _ror, timedSec,
-           leftN);
+  // Was D_printf-ing this every call -- shared by both BT (btRor, ~114ms) and
+  // ET (etRorTracker, ~125ms), so once each has 20s of history this alone put
+  // ~17 lines/sec into WebSerial. Uncomment briefly if ROR itself needs
+  // eyeballing again.
+  // D_printf("ROR: %.2f /min (span %.1fs, %d-sample left avg)\n", _ror,
+  //          timedSec, leftN);
   return _ror;
 }
