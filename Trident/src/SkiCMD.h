@@ -87,8 +87,15 @@ void handleREAD() {
   String readMsg = "0," + String(etReport(), 1) + "," + String(temp, 1) + "," +
                    String(sendBuffer[HEAT_BYTE]) + "," +
                    String(sendBuffer[VENT_BYTE]) + "\r\n";
-  D_print("READ Output: ");
-  D_println(readMsg);
+
+  // Was D_print/D_println-ing readMsg here on every call -- webSocketLoop()
+  // (main.cpp) calls handleREAD() unconditionally from the ~1ms
+  // webSerialLoop task, so this flooded WebSerial with ~1000 "READ Output:"
+  // lines/sec regardless of whether Artisan actually sent a READ, making the
+  // console useless for anything else. Removed; uncomment briefly if this
+  // specific message ever needs eyeballing again.
+  // D_print("READ Output: ");
+  // D_println(readMsg);
 
   // notifyBLEClient(readMsg);
   lastEventTime = micros();
