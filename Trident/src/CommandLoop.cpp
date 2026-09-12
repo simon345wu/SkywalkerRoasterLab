@@ -42,15 +42,6 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
   case WS_EVT_DATA: {
 
     AwsFrameInfo *info = (AwsFrameInfo *)arg;
-    // Was gated behind #ifdef DEBUG, a build flag that's never actually
-    // defined anywhere in platformio.ini -- these two lines were dead code,
-    // silently compiled out, in every build this firmware has ever shipped.
-    // Now gated by LOG_WS instead (see dlog.h) like everything else here, so
-    // "LOG;WS;ON" from the WebSerial console actually shows the raw frame.
-    D_printf(LOG_WS, "ws[%s][%u] %s-message[%llu]: ", server->url(),
-             client->id(), (info->opcode == WS_TEXT) ? "text" : "binary",
-             info->len);
-    D_printf(LOG_WS, "final: %d\n", info->final);
 
     String msg = "";
     /*if (info->opcode != WS_TEXT || !info->final) {*/
@@ -60,7 +51,6 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
     for (size_t i = 0; i < info->len; i++) {
       msg += (char)data[i];
     }
-    D_printf(LOG_WS, "msg: %s\n", msg.c_str());
 
     JsonDocument doc;
 
@@ -72,13 +62,30 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
       // Previously silent: a malformed/unexpected payload here left doc
       // empty, so every doc["..."].isNull() check below was quietly true
       // and nothing happened -- indistinguishable from "nothing arrived" at
-      // all without this.
+      // all without this. Always printed, even for the routine getData poll
+      // below, since a parse failure is never routine.
       D_printf(LOG_WS, "JSON parse failed (%s): %s\n", jsonErr.c_str(),
                msg.c_str());
       break;
     }
 
     long ln_id = doc["id"].as<long>();
+    const char *cmdPeek = doc["command"].as<const char *>();
+    bool isGetDataPoll = cmdPeek != NULL && strncmp(cmdPeek, "getData", 7) == 0;
+    if (!isGetDataPoll) {
+      // Artisan polls with a plain {"command":"getData",...} many times a
+      // second (once per configured channel) -- routine and uninteresting,
+      // so it's skipped here to keep real commands (BurnerVal/FanVal/Drum/
+      // Cooling) visible in "LOG;WS;ON" instead of buried under it. Was also
+      // previously gated behind #ifdef DEBUG, a build flag never actually
+      // defined anywhere in platformio.ini -- dead code in every build this
+      // firmware has shipped, regardless of the getData noise.
+      D_printf(LOG_WS, "ws[%s][%u] %s-message[%llu]: ", server->url(),
+               client->id(), (info->opcode == WS_TEXT) ? "text" : "binary",
+               info->len);
+      D_printf(LOG_WS, "final: %d\n", info->final);
+      D_printf(LOG_WS, "msg: %s\n", msg.c_str());
+    }
     // Get BurnerVal from Artisan over Websocket
     if (!doc["BurnerVal"].isNull()) {
       unsigned char val = doc["BurnerVal"].as<unsigned char>();
@@ -105,8 +112,7 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
     // Send Values to Artisan over Websocket
     JsonDocument root;
     root["id"] = ln_id;
-    const char *command = doc["command"].as<const char *>();
-    if (command != NULL && strncmp(command, "getData", 7) == 0) {
+    if (isGetDataPoll) {
       wsHandshakeDone = true;
       root["data"]["ET"] = state.et;   // external MAX31865 probe (or BT mirrored)
       root["data"]["BT"] = state.temp; // roaster's own probe
