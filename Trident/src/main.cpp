@@ -5,6 +5,7 @@
 #include <PID_v1.h>
 #include <WebSerial.h>
 #include <WiFi.h>
+#include <esp_log.h>
 
 #include "CommandLoop.h"
 #include "SkiComms.h"
@@ -65,7 +66,20 @@ unsigned long lastUsbActivityTime = 0; // marker for USB status display
 // fresh Artisan session always re-sends CHAN before it resumes polling.
 bool artisanHandshakeDone = false;
 
+// ESP-IDF's own logging (log_e()/log_w()/... -- used internally by bundled
+// libraries, e.g. AsyncWebSocket.cpp's "too many messages queued" error)
+// writes straight to physical Serial (UART0) by default, the same port
+// Artisan's TC4 protocol lives on. Confirmed on hardware 2026-09-12: with a
+// WebSerial browser tab left open and its message queue backing up,
+// AsyncWebSocket's log_e() calls fired fast enough to visibly interleave/
+// corrupt each other on the wire (garbled, doubled-up characters). Installed
+// before anything else can log, so IDF log output never reaches Serial at
+// all -- dropped rather than rerouted to WebSerial, since WebSerial has the
+// same queue-backpressure problem and could just move the corruption there.
+static int droppedVprintf(const char *fmt, va_list args) { return 0; }
+
 void setup() {
+  esp_log_set_vprintf(droppedVprintf);
   Serial.begin(115200);
 #ifdef S3
   // Own dedicated task instead of polling from webSerialLoop()'s 250ms-paced
