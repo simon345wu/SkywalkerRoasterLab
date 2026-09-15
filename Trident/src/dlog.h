@@ -25,6 +25,7 @@ enum LogCategory : uint8_t {
   LOG_PID,     // PID tuning (SkiCMD.h + ble.cpp PID_* characteristics)
   LOG_TOUCH,   // touch.cpp
   LOG_QUEUE,   // state_request_queue.cpp arbitration
+  LOG_WEATHER, // weather.cpp ambient fetch from PC proxy
   LOG_CATEGORY_COUNT
 };
 

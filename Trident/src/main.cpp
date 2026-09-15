@@ -18,6 +18,7 @@
 #include "pindef.h"
 #include "state_request_queue.h"
 #include "touch.h"
+#include "weather.h"
 #include "wifi_setup.h"
 
 // -----------------------------------------------------------------------------
@@ -114,11 +115,21 @@ void setup() {
     if (logHandleCommand(input)) {
       return;
     }
+    // WEATHER / WEATHER;NOW -- WebSerial-console-only inspection of the ambient
+    // reading, same interception pattern as logHandleCommand.
+    if (weatherHandleCommand(input)) {
+      return;
+    }
     parseAndExecuteCommands(input);
   });
   setupMainLoop(&server);
   setupApi(&server);
   server.begin();
+  // Background task: fetches ambient temp/pressure/humidity over plain HTTP
+  // from the PC proxy and caches them for the getData WebSocket reply + the
+  // Config screen. Idles until a proxy URL is set (via /api/weather) and WiFi
+  // is connected.
+  weatherInit();
   xTaskCreate(webSerialLoop, "WebSerialTask", configMINIMAL_STACK_SIZE + 2048,
               NULL, 1, NULL);
   // Display drawing was only ever sharing webSerialLoop()'s 250ms delay by

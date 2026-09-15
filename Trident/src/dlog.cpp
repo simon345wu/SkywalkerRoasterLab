@@ -6,8 +6,8 @@
 static bool categoryEnabled[LOG_CATEGORY_COUNT];
 
 static const char *kCategoryNames[LOG_CATEGORY_COUNT] = {
-    "SYS", "WIFI", "BLE", "WS",  "ROASTER", "ET",
-    "ROR", "CMD",  "PID", "TOUCH", "QUEUE",
+    "SYS", "WIFI", "BLE",   "WS",    "ROASTER", "ET",
+    "ROR", "CMD",  "PID",   "TOUCH", "QUEUE",   "WEATHER",
 };
 
 void logInit() {

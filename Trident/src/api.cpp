@@ -1,5 +1,7 @@
 #include "dlog.h"
+#include "weather.h"
 #include "wifi_setup.h"
+#include <ArduinoJson.h>
 #include <ESPAsyncWebServer.h>
 #include <Preferences.h>
 
@@ -23,5 +25,27 @@ void setupApi(AsyncWebServer *server) {
 
     prefs.end();
     request->send(200);
+  });
+
+  // GET with ?proxy=<url> stores the PC weather-proxy base URL (e.g.
+  // http://192.168.31.50:8765); without params returns the current proxy and
+  // the latest cached ambient reading as JSON.
+  server->on("/api/weather", HTTP_GET, [](AsyncWebServerRequest *request) {
+    if (request->hasParam("proxy")) {
+      weatherSetProxy(request->getParam("proxy")->value());
+      request->send(200);
+      return;
+    }
+    WeatherData w = weatherGet();
+    JsonDocument doc;
+    doc["proxy"] = weatherGetProxy();          // manual override ("" = auto)
+    doc["active"] = weatherGetActiveBase();     // URL actually in use (mDNS or manual)
+    doc["valid"] = w.valid;
+    doc["temp"] = w.tempC;
+    doc["pressure"] = w.pressureHpa;
+    doc["humidity"] = w.humidity;
+    String out;
+    serializeJson(doc, out);
+    request->send(200, "application/json", out);
   });
 }

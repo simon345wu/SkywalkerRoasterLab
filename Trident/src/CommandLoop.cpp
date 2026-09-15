@@ -4,6 +4,7 @@
 #include "dlog.h"
 #include "model.h"
 #include "state_request_queue.h"
+#include "weather.h"
 #include <ESPAsyncWebServer.h>
 
 AsyncWebSocket ws("/ws");
@@ -120,9 +121,19 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
       root["data"]["FanVal"] = state.request.fan;
       root["data"]["Drum"] = state.request.drum;
       root["data"]["Cool"] = state.request.cooling;
+      // Ambient conditions (weather.cpp fetches them over plain HTTP from the
+      // PC proxy). Only emitted once a valid reading exists, so Artisan never
+      // records a placeholder. Mapped as extra channels AT/AP/AH and assigned
+      // in Artisan's Ambient tab.
+      WeatherData w = weatherGet();
+      if (w.valid) {
+        root["data"]["AT"] = w.tempC;       // ambient temperature
+        root["data"]["AP"] = w.pressureHpa; // barometric pressure
+        root["data"]["AH"] = w.humidity;    // relative humidity
+      }
     }
 
-    char buffer[200];                         // create temp buffer
+    char buffer[320];                         // create temp buffer
     size_t len = serializeJson(root, buffer); // serialize to buffer
     // DEBUG WEBSOCKET
 

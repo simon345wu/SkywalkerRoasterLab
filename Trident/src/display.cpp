@@ -194,6 +194,7 @@ void displayDashboard(float temp, float ror, uint8_t heat, uint8_t fan,
 #include "ble.h"
 #include "et_sensor.h"
 #include "touch.h"
+#include "weather.h"
 #include "wifi_setup.h"
 #include <Preferences.h>
 #include <WiFi.h>
@@ -338,6 +339,7 @@ static lv_obj_t *etLabel = nullptr;    // external MAX31865 probe
 static lv_obj_t *etRorLabel = nullptr; // ET rate-of-rise
 static lv_obj_t *wifiIpLabel = nullptr; // now lives on configScreen
 static lv_obj_t *bleNameLabel = nullptr; // configScreen
+static lv_obj_t *ambientLabel = nullptr; // configScreen: online ambient reading
 static lv_obj_t *wifiLed = nullptr;
 static lv_obj_t *wsLed = nullptr;
 static lv_obj_t *bleLed = nullptr;
@@ -654,6 +656,20 @@ static void lvglRefreshCb(lv_timer_t *timer) {
   // it's set, whatever the exact boot timing ends up being.
   lv_label_set_text_fmt(bleNameLabel, "BLE: %s", getBleDeviceName().c_str());
 
+  // Online ambient reading (weather.cpp). LVGL's set_text_fmt has no %f, so
+  // format the floats with the C library's snprintf first.
+  WeatherData wnow = weatherGet();
+  if (weatherGetActiveBase().length() == 0) {
+    lv_label_set_text(ambientLabel, "(finding proxy)");
+  } else if (!wnow.valid) {
+    lv_label_set_text(ambientLabel, "--");
+  } else {
+    char abuf[48];
+    snprintf(abuf, sizeof(abuf), "%.1fC  %.0fhPa  %.0f%%", wnow.tempC,
+             wnow.pressureHpa, wnow.humidity);
+    lv_label_set_text(ambientLabel, abuf);
+  }
+
   if (wsHandshakeDone) {
     setLedState(wsLed, LED_HANDSHAKE);
   } else if (wsClientConnected()) {
@@ -944,6 +960,18 @@ void lvglInit() {
   lv_obj_add_event_cb(darkThemeBtn, darkThemeBtnCb, LV_EVENT_CLICKED, NULL);
 
   updateThemeButtonStyles();
+
+  // ---- Ambient (online weather) readout -----------------------------------
+  // Temp/pressure/humidity fetched by weather.cpp (plain HTTP from the PC
+  // proxy) and also sent to Artisan as AT/AP/AH. Numbers only -- the montserrat
+  // font has no CJK glyphs, so no city name here. Updated by lvglRefreshCb().
+  lv_obj_t *ambientCaption = lv_label_create(configScreen);
+  lv_obj_set_pos(ambientCaption, 6, 170);
+  lv_label_set_text(ambientCaption, "Ambient:");
+
+  ambientLabel = lv_label_create(configScreen);
+  lv_obj_set_pos(ambientLabel, 6, 194);
+  lv_label_set_text(ambientLabel, "--");
 
   Serial.println("[LVGL] config screen built");
 
