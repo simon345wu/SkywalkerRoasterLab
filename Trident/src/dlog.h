@@ -27,6 +27,7 @@ enum LogCategory : uint8_t {
   LOG_TOUCH,   // touch.cpp
   LOG_QUEUE,   // state_request_queue.cpp arbitration
   LOG_WEATHER, // weather.cpp ambient fetch from PC proxy
+  LOG_DIAG,    // on-demand diagnostics: heap/WS-rate ticks (CommandLoop.cpp)
   LOG_CATEGORY_COUNT
 };
 
@@ -37,6 +38,14 @@ void logInit();
 
 bool logEnabled(LogCategory cat);
 void logSetEnabled(LogCategory cat, bool on);
+
+// WebSerial is the only log sink, and it only exists once WebSerial.begin() has
+// run -- which happens only in WebSocket comms mode (BLE mode brings up no WiFi/
+// AsyncWebServer at all). Until this is set true, logEnabled() reports false for
+// every category so D_println/D_print/D_printf never touch an unstarted
+// WebSerial. Call with true right after WebSerial.begin(); leave false in BLE
+// mode.
+void logSetSinkReady(bool ready);
 void logSetAllEnabled(bool on);
 const char *logCategoryName(LogCategory cat);
 int logCategoryFromName(const String &name); // -1 if no match

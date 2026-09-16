@@ -5,9 +5,15 @@
 
 static bool categoryEnabled[LOG_CATEGORY_COUNT];
 
+// False until WebSerial.begin() has run (WebSocket mode only). Gates all
+// logging so BLE mode -- which starts no WebSerial -- never writes to it.
+static bool sinkReady = false;
+
+void logSetSinkReady(bool ready) { sinkReady = ready; }
+
 static const char *kCategoryNames[LOG_CATEGORY_COUNT] = {
-    "SYS", "WIFI", "BLE",  "WS",  "ROASTER", "ET",
-    "BT2", "ROR",  "CMD",  "PID", "TOUCH",   "QUEUE",  "WEATHER",
+    "SYS", "WIFI", "BLE",  "WS",  "ROASTER", "ET",      "BT2",
+    "ROR", "CMD",  "PID",  "TOUCH", "QUEUE", "WEATHER", "DIAG",
 };
 
 void logInit() {
@@ -17,10 +23,12 @@ void logInit() {
   categoryEnabled[LOG_ET] = false;
   categoryEnabled[LOG_BT2] = false;
   categoryEnabled[LOG_ROR] = false;
+  // On-demand diagnostics off by default -- turn on with "LOG;DIAG;ON".
+  categoryEnabled[LOG_DIAG] = false;
 }
 
 bool logEnabled(LogCategory cat) {
-  return cat < LOG_CATEGORY_COUNT && categoryEnabled[cat];
+  return sinkReady && cat < LOG_CATEGORY_COUNT && categoryEnabled[cat];
 }
 
 void logSetEnabled(LogCategory cat, bool on) {

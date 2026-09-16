@@ -6,6 +6,25 @@
 #include "state_request_queue.h"
 #include "weather.h"
 #include <ESPAsyncWebServer.h>
+#include <esp_heap_caps.h>
+
+// Heap diagnostics for the "WebSocket dies after a while" investigation.
+// Prints total free heap, the lowest free heap ever seen (min watermark), the
+// largest contiguous INTERNAL-RAM block (fragmentation -- WiFi/AsyncTCP can
+// only use internal RAM, not PSRAM), free internal RAM, and the live WS client
+// count. Emitted to WebSerial, which stays reachable after Artisan drops since
+// the board itself keeps running, so the reading at the moment of failure is
+// visible. Toggle off at runtime with "LOG;WS;OFF" if it gets noisy.
+static void logHeapStats(const char *tag, size_t wsClients) {
+  D_printf(LOG_DIAG,
+           "[HEAP] %s free=%u minFree=%u internalFree=%u internalLargest=%u "
+           "wsClients=%u\n",
+           tag, (unsigned)esp_get_free_heap_size(),
+           (unsigned)esp_get_minimum_free_heap_size(),
+           (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+           (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
+           (unsigned)wsClients);
+}
 
 AsyncWebSocket ws("/ws");
 
@@ -20,12 +39,35 @@ bool wsHandshakeDone = false;
 
 bool wsClientConnected() { return ws.count() > 0; }
 
+// getData polls counted in onWsEvent (AsyncTCP task), read + reset every ~3s in
+// socketTick (webSerialLoop task) to print the actual request rate. A rate
+// counter tolerates the tiny cross-task read/reset race, so plain volatile is
+// enough here.
+static volatile uint32_t s_getDataCount = 0;
+// Replies dropped because the client's send queue was full (the queueIsFull
+// guard below). Each drop is one sample the client never receives for the
+// channel it asked -- i.e. a gap in Artisan. Printed alongside the rate so we
+// can tell a firmware-side drop from an Artisan-side (request_timeout) gap.
+static volatile uint32_t s_replyDropped = 0;
+
 void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
                AwsEventType type, void *arg, uint8_t *data, size_t len) {
 
   switch (type) {
   case WS_EVT_CONNECT: {
     D_printf(LOG_WS, "[%u] Connected!\n", client->id());
+    logHeapStats("connect", ws.count());
+    // Defense-in-depth against the "WebSocket dies after a while" hang. By
+    // default AsyncWebSocketClient::closeWhenFull is true, so the moment our
+    // per-client send queue overflows (Artisan polls getData faster than WiFi
+    // can flush during a hiccup) the library calls _client->close() and drops
+    // the connection -- board stays alive (display/touch are other tasks) but
+    // Artisan sees a disconnect and hangs. For a continuous getData feed, losing
+    // a reply is fine (the next poll is a fresh snapshot), so tell the library
+    // to DISCARD on a full queue instead of closing. Paired with the
+    // queueIsFull() guard before client->text() below, which keeps our own send
+    // path from ever filling the queue in the first place.
+    client->setCloseClientOnQueueFull(false);
     // Artisan's own "ON" event action is unreliable over WebSocket (races
     // its device connection setup, see PROGRESS.md) so the drum is started
     // here instead, directly on socket connect, rather than depending on
@@ -35,6 +77,9 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
   } break;
   case WS_EVT_DISCONNECT: {
     D_printf(LOG_WS, "[%u] Disconnected!\n", client->id());
+    // Snapshot heap right at the disconnect -- if the WS is dying from memory
+    // exhaustion/fragmentation, this line captures how low it got.
+    logHeapStats("disconnect", ws.count());
     wsHandshakeDone = false;
     // turn off heater and set fan to 100%
     // setHeaterPower(0);
@@ -73,6 +118,9 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
     long ln_id = doc["id"].as<long>();
     const char *cmdPeek = doc["command"].as<const char *>();
     bool isGetDataPoll = cmdPeek != NULL && strncmp(cmdPeek, "getData", 7) == 0;
+    if (isGetDataPoll) {
+      s_getDataCount++; // tallied here, rate printed from socketTick every ~3s
+    }
     if (!isGetDataPoll) {
       // Artisan polls with a plain {"command":"getData",...} many times a
       // second (once per configured channel) -- routine and uninteresting,
@@ -138,9 +186,25 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
     size_t len = serializeJson(root, buffer); // serialize to buffer
     // DEBUG WEBSOCKET
 
-    client->text(buffer);
-    // send message to client
-    // webSocket.sendTXT(num, "message here");
+    // Only enqueue a reply if the client's send queue has room. Artisan polls
+    // getData at high frequency (once per configured channel, many times a
+    // second), so if WiFi/TCP momentarily can't flush as fast as replies are
+    // produced, an unconditional client->text() overflows AsyncWebSocket's
+    // per-client queue -- _queueMessage() then logs "Too many messages queued"
+    // (AsyncWebSocket.cpp:436) and the socket stalls, which is the "WebSocket
+    // freezes after running a while" hang. The library's own header recommends
+    // checking queueIsFull() before sending. A getData reply is an always-fresh
+    // snapshot, so dropping one when the queue is backed up is harmless -- the
+    // next poll carries current values -- and it keeps the board alive instead
+    // of wedging. (Was previously only papered over by silencing the IDF log
+    // that this same overflow emits, see main.cpp's esp_log_set_vprintf.)
+    if (!client->queueIsFull()) {
+      client->text(buffer);
+    } else {
+      s_replyDropped++;
+      D_printf(LOG_DIAG, "WS send queue full -- dropping getData reply (%u bytes)\n",
+               (unsigned)len);
+    }
 
     // send data to all connected clients
     // webSocket.broadcastTXT("message here");
@@ -167,6 +231,30 @@ void setupMainLoop(AsyncWebServer *server) {
 StateRequestT socketTick(StateDataT data) {
   state = data;
   ws.cleanupClients();
+  // Periodic heap trend (every ~3s). Watching this while Artisan polls until it
+  // dies tells us whether free heap / largest internal block is steadily
+  // dropping (leak or fragmentation) or holding flat (then the disconnect is
+  // something other than memory). Also surfaces ghost WS clients piling up if
+  // cleanupClients() ever fails to prune a half-closed connection.
+  static unsigned long lastHeapLogMs = 0;
+  unsigned long nowMs = millis();
+  if (nowMs - lastHeapLogMs >= 3000) {
+    unsigned long elapsed = nowMs - lastHeapLogMs;
+    lastHeapLogMs = nowMs;
+    // Snapshot + reset the getData tally and turn it into a per-second rate over
+    // the actual elapsed window -- this is how many getData polls Artisan is
+    // really sending (one per channel whose Request is getData, per sample).
+    uint32_t count = s_getDataCount;
+    uint32_t dropped = s_replyDropped;
+    s_getDataCount = 0;
+    s_replyDropped = 0;
+    float rate = elapsed > 0 ? (count * 1000.0f) / (float)elapsed : 0.0f;
+    // dropped>0 => the gaps are firmware-side (queue full). dropped==0 while
+    // Artisan still shows gaps => the drop is Artisan-side (request_timeout).
+    D_printf(LOG_DIAG, "[WSRATE] getData=%u dropped=%u over %lums -> %.1f/s\n",
+             (unsigned)count, (unsigned)dropped, elapsed, rate);
+    logHeapStats("tick", ws.count());
+  }
   StateRequestT response = request;
   request = {255, 255, 255, 255};
   return response;

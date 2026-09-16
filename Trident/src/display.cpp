@@ -194,6 +194,7 @@ void displayDashboard(float temp, float ror, uint8_t heat, uint8_t fan,
 #include "ble.h"
 #include "bt2_sensor.h"
 #include "et_sensor.h"
+#include "comms_mode.h"
 #include "touch.h"
 #include "weather.h"
 #include "wifi_setup.h"
@@ -394,6 +395,37 @@ static void setTheme(bool dark) {
 
 static void lightThemeBtnCb(lv_event_t *e) { setTheme(false); }
 static void darkThemeBtnCb(lv_event_t *e) { setTheme(true); }
+
+// ---- Comms mode (WebSocket vs BLE), selected on the Config screen ---------
+// WiFi and BLE can't both fit in this board's internal RAM (see comms_mode.h),
+// so only one radio is brought up per boot. These two buttons pick which; the
+// choice is written to NVS immediately and applied on the next reboot (the
+// Reboot button below, or any power cycle). Same manual "radio group" styling
+// as the theme buttons -- the button matching the *saved* mode is highlighted.
+static lv_obj_t *wsModeBtn = nullptr;
+static lv_obj_t *bleModeBtn = nullptr;
+
+static void updateModeButtonStyles() {
+  if (!wsModeBtn || !bleModeBtn)
+    return;
+  CommsMode saved = commsModeGet();
+  lv_obj_set_style_bg_color(
+      wsModeBtn,
+      lv_palette_main(saved == COMMS_WEBSOCKET ? LV_PALETTE_BLUE : LV_PALETTE_GREY),
+      0);
+  lv_obj_set_style_bg_color(
+      bleModeBtn,
+      lv_palette_main(saved == COMMS_BLE ? LV_PALETTE_BLUE : LV_PALETTE_GREY), 0);
+}
+
+static void setCommsModeUI(CommsMode mode) {
+  commsModeSet(mode); // persisted only -- takes effect on the next reboot
+  updateModeButtonStyles();
+}
+
+static void wsModeBtnCb(lv_event_t *e) { setCommsModeUI(COMMS_WEBSOCKET); }
+static void bleModeBtnCb(lv_event_t *e) { setCommsModeUI(COMMS_BLE); }
+static void rebootBtnCb(lv_event_t *e) { ESP.restart(); }
 
 // Temp readout tile: black background box + small caption + colored number,
 // matching the old (non-LVGL) dashboard's drawTempTile()/drawRorTile() look
@@ -981,6 +1013,41 @@ void lvglInit() {
   lv_obj_add_event_cb(darkThemeBtn, darkThemeBtnCb, LV_EVENT_CLICKED, NULL);
 
   updateThemeButtonStyles();
+
+  // ---- Comms mode: WebSocket / BLE (radio group) + Reboot-to-apply --------
+  // Right column, mirroring the Display row on the left. Picks which radio the
+  // board starts (see comms_mode.h) -- WiFi/Artisan-WebSocket or BLE/HiBean.
+  // Both can't share this board's internal RAM, so switching needs a reboot;
+  // the tap saves to NVS and the Reboot button applies it.
+  lv_obj_t *commsCaption = lv_label_create(configScreen);
+  lv_obj_set_pos(commsCaption, 182, 104);
+  lv_label_set_text(commsCaption, "Comms:");
+
+  wsModeBtn = lv_button_create(configScreen);
+  lv_obj_set_size(wsModeBtn, 62, 30);
+  lv_obj_set_pos(wsModeBtn, 182, 128);
+  lv_obj_t *wsModeLabel = lv_label_create(wsModeBtn);
+  lv_label_set_text(wsModeLabel, "WS");
+  lv_obj_center(wsModeLabel);
+  lv_obj_add_event_cb(wsModeBtn, wsModeBtnCb, LV_EVENT_CLICKED, NULL);
+
+  bleModeBtn = lv_button_create(configScreen);
+  lv_obj_set_size(bleModeBtn, 62, 30);
+  lv_obj_set_pos(bleModeBtn, 250, 128);
+  lv_obj_t *bleModeLabel = lv_label_create(bleModeBtn);
+  lv_label_set_text(bleModeLabel, "BLE");
+  lv_obj_center(bleModeLabel);
+  lv_obj_add_event_cb(bleModeBtn, bleModeBtnCb, LV_EVENT_CLICKED, NULL);
+
+  updateModeButtonStyles();
+
+  lv_obj_t *rebootBtn = lv_button_create(configScreen);
+  lv_obj_set_size(rebootBtn, 128, 30);
+  lv_obj_set_pos(rebootBtn, 182, 170);
+  lv_obj_t *rebootLabel = lv_label_create(rebootBtn);
+  lv_label_set_text(rebootLabel, LV_SYMBOL_REFRESH " Reboot");
+  lv_obj_center(rebootLabel);
+  lv_obj_add_event_cb(rebootBtn, rebootBtnCb, LV_EVENT_CLICKED, NULL);
 
   // ---- Ambient (online weather) readout -----------------------------------
   // Temp/pressure/humidity fetched by weather.cpp (plain HTTP from the PC

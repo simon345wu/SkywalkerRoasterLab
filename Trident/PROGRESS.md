@@ -533,3 +533,49 @@ User wired a **second** MAX31865, PT1000, 4-wire, CS=GPIO39, sharing the same to
 ### Open items
 - Validate PID control behavior on the new BT input during a real roast.
 - All earlier open items (Artisan ET-curve/roast validation, etc.) still apply.
+
+## 2026-09-16 — Artisan WebSocket stability: disconnect root-cause, WiFi/BLE RAM split, HEAT/FAN as step events
+
+User report: after running a while the Artisan WebSocket connection dies and Artisan itself hangs, **but the board stays alive** — the ILI9341 display keeps updating and the touchscreen still responds. That "board fine, only the socket dies" split is the key clue: the AsyncTCP task is a separate FreeRTOS task from the display/touch tasks, so whatever kills the WebSocket doesn't touch the rest.
+
+### First attempt (real but insufficient): queue-overflow close
+
+- `_queueMessage()` in the ESP32Async fork of `AsyncWebSocket.cpp` defaults `closeWhenFull = true` (AsyncWebSocket.h:224). When a client's per-client send queue reaches `WS_MAX_QUEUED_MESSAGES`, it calls `_client->close()` and logs "Too many messages queued: closing connection" — i.e. the library drops the connection itself. This is the same overflow whose *log* the 2026-09-12/-16 work silenced (`CORE_DEBUG_LEVEL=0`) without ever addressing the close.
+- `CommandLoop.cpp`'s `onWsEvent()` was calling `client->text()` unconditionally on every getData reply. Fix: guard with `if (!client->queueIsFull())` (the header's own recommendation) so we never trip the overflow branch, and set `client->setCloseClientOnQueueFull(false)` on `WS_EVT_CONNECT` so even if it ever fills it **discards** rather than closes. A dropped getData reply is harmless — the next poll is a fresh snapshot.
+- **Did not fully fix it** — still disconnected. So the queue wasn't the (only) cause.
+
+### Root cause (found by instrumenting heap): internal RAM exhaustion
+
+Added a heap monitor to `socketTick()` (every ~3s) + on WS connect/disconnect, printing to WebSerial: `esp_get_free_heap_size`, min-ever, `heap_caps_get_free_size(MALLOC_CAP_INTERNAL)`, `heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL)`, and `ws.count()`.
+
+- Total free heap looked huge (~8.3 MB) but that's **PSRAM**. The number that matters is **internal RAM**, which WiFi/AsyncTCP/BLE can only allocate from (never PSRAM): only **~13.5 KB free, largest contiguous block ~7.6 KB**. No leak (min-watermark stable, `wsClients` stayed 1) — it's chronically *low*. Any momentary WiFi/AsyncTCP allocation spike that needs more than the largest block fails → AsyncTCP aborts the connection. Board survives because display/touch run on already-allocated / PSRAM memory.
+- The board runs **WiFi + NimBLE + LVGL + AsyncTCP simultaneously**; NimBLE alone eats ~30-40 KB of internal RAM. That's what starved it.
+
+### Fix: user-selectable WiFi **or** BLE per boot (one radio at a time)
+
+Design agreed with user (the board is tri-purpose USB/BLE/WiFi; USB-TC4 is cheap UART and stays on in both modes):
+
+- **`src/comms_mode.h`/`.cpp` (new):** NVS-persisted `CommsMode` (`COMMS_WEBSOCKET` default / `COMMS_BLE`), read once at boot. Switching takes effect on **reboot** (deinitialising a live NimBLE/WiFi stack at runtime fragments the heap; a clean reboot is simpler/reliable).
+- **`main.cpp`:** `g_commsMode = commsModeGet()` early in `setup()`; the WiFi block (`setupWifi`/`WebSerial.begin`/`setupMainLoop`/`setupApi`/`server.begin`/`weatherInit`) is gated to WebSocket mode, `initBLE()` to BLE mode. `webSerialLoop()` now ticks only the active stack (was calling both `webSocketLoop()` and `bleLoop()` unconditionally — the old always-both behaviour is exactly what starved RAM).
+- **`dlog.h`/`.cpp`:** added a `logSetSinkReady(bool)` gate — WebSerial is the only log sink and only exists in WebSocket mode, so `logEnabled()` returns false until `WebSerial.begin()` has run, keeping BLE mode from ever touching an unstarted WebSerial.
+- **`display.cpp`:** Config screen (right column) gained a **Comms: [WS] [BLE]** radio group + a **Reboot** button, same pattern as the existing theme radio. Tap writes NVS via `commsModeSet()`; Reboot applies. `getBleDeviceName()`/`WiFi.*`/`wsClientConnected()` are all safe to call in the "off" mode (return empty/false).
+- **Result (user-confirmed on COM9):** in WebSocket mode `internalFree` jumped **13.5 KB → ~83 KB**, largest internal block **7.6 KB → ~38 KB**, and the disconnects stopped over a long run. Root cause confirmed.
+
+### getData request rate — confirmed firmware is clean
+
+Added a getData counter (`s_getDataCount`) + dropped-reply counter (`s_replyDropped`), printed each heap tick as `[WSRATE] getData=N dropped=D -> X/s`. Live: **~4.0/s, dropped=0**, `wsClients=1`, `internalFree` flat ~78 KB. So Artisan answers every poll, firmware drops nothing — the queue guard never even trips at this rate. `getData` is one request per channel whose Artisan `Request` field is `getData`, per sample (`Delay=1000`); each *response* is always a full snapshot of every field regardless.
+
+### HEAT/FAN display: they're setpoints → Artisan **events (steps)**, not sampled curves
+
+User noticed HEAT/FAN updating late and dropping out. `dropped=0` ruled out the firmware; raising Artisan's `request_timeout` 0.5→2 didn't help. The real issue: HEAT/FAN are *control setpoints* (the firmware echoes `state.request.heater/fan`), a step function — but they were configured as **extra-device sampled channels**, which Artisan reads at the sample rate, linearly interpolates, and runs `dropSpikes`/`filterDropOuts` over (filters meant for smooth ET/BT temperature curves). Wrong tool → gaps.
+- Correct model: read them as Artisan **Events** (Air = fan, Burner = heat), which draw as **step lines** (`eventsGraphflag=2`, Step+) and are recorded when the sliders move. That infrastructure already existed in the `.aset`.
+- Fixed **in Artisan's GUI**, not by editing the `.aset`. **Important reusable fact:** Artisan's live settings live in the OS store (Windows registry / QSettings); the `.aset` file is only an export/import, applied via `Help → Load Settings` and written via `Help → Save Settings`. Editing the `.aset` on disk does nothing to a running Artisan — which is why earlier external `.aset` edits (host, channel_nodes swaps) never took effect. Extra-device ↔ channel ↔ ambient-source mappings are also cross-indexed and only stay consistent when edited through the GUI; hand-editing had left them inconsistent (e.g. ambient sources pointing past the last extra device).
+
+### Diagnostic logging still in `CommandLoop.cpp` (cleanup pending)
+
+`[HEAP]` and `[WSRATE]` lines are on category `LOG_WS` (silence at runtime with `LOG;WS;OFF`). Pending user decision: keep as-is, move to a dedicated `LOG_DIAG` category defaulting off, or remove. All the queue guard / `setCloseClientOnQueueFull(false)` / comms-mode changes are keepers regardless.
+
+### Open items (this session)
+- Decide the fate of the `[HEAP]`/`[WSRATE]` diagnostic logging (see above).
+- Artisan `.aset` after the user's GUI rebuild: ambient **Pressure vs Humidity** sources look swapped (`AmbientPressureSource`/`AmbientHumiditySource` point at AH/AP respectively under the extra-device enumeration) — user to verify against the known proxy values (~24.1 °C / 1011.6 hPa / 77 %) and reselect if needed. Leftover `BurnerVal, FanVal, AIR` entries still sit in `channel_nodes` positions 3-5 but are unrequested/harmless.
+- `.aset` `compression=true` is a no-op: this ESPAsyncWebServer fork implements no WebSocket permessage-deflate (confirmed by source grep), so it's never negotiated.

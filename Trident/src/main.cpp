@@ -12,6 +12,7 @@
 #include "SkiCMD.h"
 #include "api.h"
 #include "ble.h"
+#include "comms_mode.h"
 #include "bt2_sensor.h"
 #include "display.h"
 #include "et_sensor.h"
@@ -51,6 +52,10 @@ const unsigned int LED_YELLOW[3] = {0, 128, 128};
 typedef enum { booting = 0, connected, disconnected } BloodhoundStateT;
 
 AsyncWebServer server(WEB_SERVER_PORT);
+// Which radio stack this boot brought up (read once from NVS in setup()).
+// WiFi and BLE both live in scarce internal RAM, so only one is initialised;
+// webSerialLoop() and setup() branch on this. See comms_mode.h.
+CommsMode g_commsMode = COMMS_WEBSOCKET;
 const char rgbLedPin = RGB_PIN;
 // const char ledPin = 15;
 bool isOn = false;
@@ -80,6 +85,32 @@ bool artisanHandshakeDone = false;
 // same queue-backpressure problem and could just move the corruption there.
 static int droppedVprintf(const char *fmt, va_list args) { return 0; }
 
+// WebSerial-console-only "HELP" / "?" -- prints the command reference. Same
+// interception pattern as logHandleCommand/weatherHandleCommand (checked before
+// parseAndExecuteCommands so it's never treated as a TC4 command). Returns true
+// if `input` was a help request and has been handled.
+bool helpHandleCommand(const String &input) {
+  String cmd = input;
+  cmd.trim();
+  cmd.toUpperCase();
+  if (cmd != "HELP" && cmd != "?") {
+    return false;
+  }
+  // WebSerial's write() sends one WebSocket message *per newline* and its queue
+  // only holds ~20 msgs/s worth -- blasting ~25 println() lines at once
+  // overflows it and the earliest lines get dropped. So keep this to a handful
+  // of dense lines (one message each) rather than one line per command.
+  WebSerial.println("=== Trident WebSerial cmds (case-insensitive, ';' separated) ===");
+  WebSerial.println("Roaster: OT1;N=heater OT2;N=fan COOL;N DRUM;N(100=on) OFF ESTOP  (N=0-100)");
+  WebSerial.println("Read: READ -> AT,ET,BT,NTC,AT,AP,AH ; CHAN handshake");
+  WebSerial.println("PID: PID;ON ; PID;OFF ; PID;SV;<0-300> ; PID;T;<Kp>;<Ki>;<Kd>");
+  WebSerial.println("Log: LOG (or LOG;LIST) ; LOG;<CAT>;ON|OFF ; LOG;ALL;ON|OFF");
+  WebSerial.println("Log CAT: SYS WIFI BLE WS ROASTER ET BT2 ROR CMD PID TOUCH QUEUE WEATHER DIAG");
+  WebSerial.println("Log: LOG;DIAG;ON = heap + WS-rate diagnostics (off by default)");
+  WebSerial.println("Weather: WEATHER / WEATHER;NOW  |  Help: HELP or ?");
+  return true;
+}
+
 void setup() {
   logInit(); // WebSerial log-category defaults; before anything else logs
   esp_log_set_vprintf(droppedVprintf);
@@ -103,34 +134,52 @@ void setup() {
   rgbLedWrite(rgbLedPin, LED_RED[0], LED_RED[1], LED_RED[2]);
 
   initStateQueue();
-  setupWifi();
-  WebSerial.begin(&server);
 
-  WebSerial.onMessage([](uint8_t *data, size_t len) {
-    String input = String(data, len);
-    // "LOG;..." is a WebSerial-console-only debug control (which message
-    // categories print, see dlog.h) -- deliberately kept out of
-    // parseAndExecuteCommands() so it can never be confused with a TC4/
-    // Artisan command, even though only this console (not USB serial) can
-    // actually reach this callback.
-    if (logHandleCommand(input)) {
-      return;
-    }
-    // WEATHER / WEATHER;NOW -- WebSerial-console-only inspection of the ambient
-    // reading, same interception pattern as logHandleCommand.
-    if (weatherHandleCommand(input)) {
-      return;
-    }
-    parseAndExecuteCommands(input);
-  });
-  setupMainLoop(&server);
-  setupApi(&server);
-  server.begin();
-  // Background task: fetches ambient temp/pressure/humidity over plain HTTP
-  // from the PC proxy and caches them for the getData WebSocket reply + the
-  // Config screen. Idles until a proxy URL is set (via /api/weather) and WiFi
-  // is connected.
-  weatherInit();
+  // Pick the radio stack for this boot. WiFi (WebSocket/WebSerial/weather) and
+  // BLE both need internal RAM that the board doesn't have enough of to run
+  // both -- see comms_mode.h. Only the selected one is initialised here; the
+  // other's internal RAM stays free. Switched from the touchscreen Config
+  // screen (writes NVS) and applied on the next reboot.
+  g_commsMode = commsModeGet();
+
+  if (g_commsMode == COMMS_WEBSOCKET) {
+    setupWifi();
+    WebSerial.begin(&server);
+    // WebSerial now exists -- allow dlog to use it (kept off until now so no log
+    // call touches an unstarted WebSerial; also stays off entirely in BLE mode).
+    logSetSinkReady(true);
+
+    WebSerial.onMessage([](uint8_t *data, size_t len) {
+      String input = String(data, len);
+      // "HELP" / "?" -- prints the command reference. Checked first so it can
+      // never be mistaken for a TC4 command.
+      if (helpHandleCommand(input)) {
+        return;
+      }
+      // "LOG;..." is a WebSerial-console-only debug control (which message
+      // categories print, see dlog.h) -- deliberately kept out of
+      // parseAndExecuteCommands() so it can never be confused with a TC4/
+      // Artisan command, even though only this console (not USB serial) can
+      // actually reach this callback.
+      if (logHandleCommand(input)) {
+        return;
+      }
+      // WEATHER / WEATHER;NOW -- WebSerial-console-only inspection of the
+      // ambient reading, same interception pattern as logHandleCommand.
+      if (weatherHandleCommand(input)) {
+        return;
+      }
+      parseAndExecuteCommands(input);
+    });
+    setupMainLoop(&server);
+    setupApi(&server);
+    server.begin();
+    // Background task: fetches ambient temp/pressure/humidity over plain HTTP
+    // from the PC proxy and caches them for the getData WebSocket reply + the
+    // Config screen. Idles until a proxy URL is set (via /api/weather) and WiFi
+    // is connected.
+    weatherInit();
+  }
   xTaskCreate(webSerialLoop, "WebSerialTask", configMINIMAL_STACK_SIZE + 2048,
               NULL, 1, NULL);
   // Display drawing was only ever sharing webSerialLoop()'s 250ms delay by
@@ -179,8 +228,10 @@ void setup() {
   // from the more complete Artisan+HiBean reference firmware (the closest
   // analog to what Trident does) instead of the arbitrary "Trident"/
   // "1.0.2" this fork used.
-  initBLE("ESP32S3_Zero_Artisan_HiBean_Roaster_Control_v1.63.ino",
-         "ESP32S3-Zero_Artisan+HiBean_v1.6.3", "ESP32_Skycommand_BLE");
+  if (g_commsMode == COMMS_BLE) {
+    initBLE("ESP32S3_Zero_Artisan_HiBean_Roaster_Control_v1.63.ino",
+            "ESP32S3-Zero_Artisan+HiBean_v1.6.3", "ESP32_Skycommand_BLE");
+  }
 
 #ifdef _ROASTER_TX_RMT_
   initRoasterTxRMT();
@@ -216,17 +267,36 @@ void handleSerialCommand(String command) {
   CommandTypeT type = classifyCommandType(command);
   if (type == CMDType_READ) {
 
-    // TC4 READ reply: ambient, ET, BT, heater, fan. ET = MAX31865 #1 probe
-    // (etReport() falls back to BT when no probe / faulted); BT = MAX31865 #2
-    // probe (bt2Report() falls back to NTC, the roaster's own probe, when no
-    // probe / faulted). skywalker.aset maps arduinoETChannel=1,
-    // arduinoBTChannel=2.
-    String readMsg = "0," + String(etReport(), 1) + "," + String(bt2Report(), 1) + "," +
-                     String(_currentState.heater) + "," +
-                     String(_currentState.fan) + "\r\n";
+    // TC4 READ reply: ambient, ET, BT, NTC, AT, AP, AH -- mirrors the WebSocket
+    // getData fields over serial so Artisan's TC4 extra devices can read them.
+    //  - ambient (field 0) = AT (ambient temp) so Artisan's ambient reading is
+    //    populated with no separate source needed.
+    //  - ch1 ET (MAX31865 #1; falls back to BT), ch2 BT (MAX31865 #2; falls
+    //    back to NTC), ch3 NTC (roaster's own probe = the global `temp`).
+    //  - ch4 AT, ch5 AP, ch6 AH -> Artisan extra devices "TC4 34" (NTC, AT) and
+    //    "TC4 56" (AP, AH). arduinoETChannel=1 / arduinoBTChannel=2 unchanged.
+    // heater/fan are intentionally NOT read channels here -- like HEAT/FAN over
+    // WebSocket they're setpoints, shown via Artisan events, not sampled curves.
+    // AT/AP/AH are 0 until the weather proxy connects (fixed-width serial format
+    // can't omit fields); NTC/ET/BT are always live.
+    WeatherData amb = weatherGet();
+    String readMsg = String(amb.tempC, 1) + "," + String(etReport(), 1) + "," +
+                     String(bt2Report(), 1) + "," + String(temp, 1) + "," +
+                     String(amb.tempC, 1) + "," + String(amb.pressureHpa, 1) + "," +
+                     String(amb.humidity, 1) + "\r\n";
     Serial.println(readMsg);
   } else if (type == CMDType_CHAN) {
-    Serial.println("# Active channels set to 2100\r\n");
+    // Echo back Artisan's own channel map (everything after "CHAN;") instead of
+    // the old hardcoded "2100". aArtisan's real protocol echoes the argument,
+    // and a fixed 2-channel value could mismatch what Artisan configured now
+    // that the READ reply carries 6 channels (ET, BT, NTC, AT, AP, AH). How many
+    // fields Artisan actually reads is driven by its device config (main ET/BT +
+    // "TC4 34"/"TC4 56" extra devices reading fields 3-6), not by this ack, but
+    // echoing keeps the handshake honest.
+    int sep = command.indexOf(';');
+    String chanArg = sep >= 0 ? command.substring(sep + 1) : "";
+    chanArg.trim();
+    Serial.println("# Active channels set to " + chanArg + "\r\n");
     artisanHandshakeDone = true;
   } else if (type == CMDType_STATE_REQUEST) {
     StateRequestT req = parseCommandToStateRequest(command);
@@ -258,15 +328,21 @@ void serialCommandTask(void *params) {
 
 void webSerialLoop(void *params) {
   while (1) {
-    WebSerial.loop();
-    // No longer paced to 250ms for display's sake (see displayLoop) --
-    // just a minimal yield so this task doesn't starve the scheduler/
-    // watchdog. ledControl() self-paces via its own millis() check;
-    // WebSerial.loop()/webSocketLoop()/bleLoop() are fine called this often.
+    // Only the stack that was actually initialised this boot gets ticked --
+    // ticking the other would touch an uninitialised WebSerial/WS server or
+    // NimBLE stack. ledControl() runs in both modes. (Formerly all three ran
+    // unconditionally, back when both radios were always brought up -- the very
+    // thing that starved internal RAM and dropped the WebSocket.)
+    if (g_commsMode == COMMS_WEBSOCKET) {
+      WebSerial.loop();
+      webSocketLoop();
+    } else {
+      bleLoop();
+    }
+    // No longer paced to 250ms for display's sake (see displayLoop) -- just a
+    // minimal yield so this task doesn't starve the scheduler/watchdog.
     vTaskDelay(pdMS_TO_TICKS(1));
     ledControl();
-    webSocketLoop();
-    bleLoop();
   }
   vTaskDelete(NULL);
 }
