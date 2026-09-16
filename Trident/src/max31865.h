@@ -2,7 +2,6 @@
 #include "dlog.h"
 #include "ror.h"
 #include <Arduino.h>
-#include <MedianFilterLib.h>
 #include <SPI.h>
 
 // Shared MAX31865 RTD-to-digital driver -- register-level I/O (not the
@@ -40,6 +39,10 @@ public:
   // step (higher = smoother/laggier); capped at 99 so it can't freeze.
   void setFilter(int filtPercent);
 
+  // Stage-1 median window: 1 (off / passthrough), 3, 5, 7 or 9. Live-settable
+  // (same task as tick(), so no locking needed).
+  void setMedianWindow(int window);
+
 private:
   int _csPin;
   float _rref;
@@ -51,7 +54,16 @@ private:
 
   SPISettings _spiSettings;
   RorTracker _rorTracker;
-  MedianFilter<double> _filter; // stage 1: median-7, rejects bursts of bad SPI reads
+
+  // Stage 1: median-of-N spike guard, window runtime-settable (1 = off). A ring
+  // of the last up-to-9 samples; medianPush() returns the median of the most
+  // recent _medWindow of them. Replaces MedianFilterLib so the window can change
+  // live (and sidesteps its window-3 GetFiltered() quirk).
+  static const int MED_MAX = 9;
+  double _medBuf[MED_MAX] = {0};
+  int _medWindow = 7; // active window: 1/3/5/7/9
+  int _medCount = 0;  // samples seen so far (<= MED_MAX)
+  int _medIdx = 0;    // next write position in the ring
 
   // Stage 2: EMA -- ema = prevWeight*ema + (1-prevWeight)*medianOut.
   float _emaPrevWeight = 0.70f;
@@ -67,6 +79,7 @@ private:
   double _temp = 0.0;
   double _ror = 0.0;
 
+  double medianPush(double v); // stage-1: median of the last _medWindow samples
   void writeReg8(uint8_t addr, uint8_t value);
   uint8_t readReg8(uint8_t addr);
   uint16_t readReg16(uint8_t addr);

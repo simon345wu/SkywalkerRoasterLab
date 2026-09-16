@@ -195,6 +195,7 @@ void displayDashboard(float temp, float ror, uint8_t heat, uint8_t fan,
 #include "bt2_sensor.h"
 #include "et_sensor.h"
 #include "comms_mode.h"
+#include "temp_smoothing.h"
 #include "touch.h"
 #include "weather.h"
 #include "wifi_setup.h"
@@ -334,6 +335,7 @@ static lv_obj_t *createStatusCell(lv_obj_t *parent, int x, int y,
 static lv_obj_t *splashScreen = nullptr;
 static lv_obj_t *mainScreen = nullptr;
 static lv_obj_t *configScreen = nullptr;
+static lv_obj_t *smoothingScreen = nullptr; // ET/BT smoothing sub-screen
 
 static lv_obj_t *btLabel = nullptr;    // external MAX31865 #2 probe
 static lv_obj_t *btRorLabel = nullptr; // BT rate-of-rise
@@ -426,6 +428,60 @@ static void setCommsModeUI(CommsMode mode) {
 static void wsModeBtnCb(lv_event_t *e) { setCommsModeUI(COMMS_WEBSOCKET); }
 static void bleModeBtnCb(lv_event_t *e) { setCommsModeUI(COMMS_BLE); }
 static void rebootBtnCb(lv_event_t *e) { ESP.restart(); }
+
+// ---- Smoothing (ET/BT) sub-screen ----------------------------------------
+// Two independent stages, each a "cycle" button (tap advances to the next
+// option). Global for ET+BT, applied live via temp_smoothing.h. Median window
+// 1(off)/3/5/7/9; EMA weight *100 0(off)/50/70/80/90 shown as 0.5/0.7/0.8/0.9.
+static lv_obj_t *medianCycleLabel = nullptr;
+static lv_obj_t *emaCycleLabel = nullptr;
+
+static const int kMedianOpts[] = {1, 3, 5, 7, 9};
+static const char *kMedianLabels[] = {"Off", "3", "5", "7", "9"};
+static const int kMedianCount = 5;
+static const int kEmaOpts[] = {0, 50, 70, 80, 90};
+static const char *kEmaLabels[] = {"Off", "0.5", "0.7", "0.8", "0.9"};
+static const int kEmaCount = 5;
+
+// Index of the option nearest to `value` (the stored value may not match an
+// option exactly -- e.g. Artisan FILT can set an arbitrary EMA weight).
+static int nearestOptIndex(const int *opts, int count, int value) {
+  int best = 0, bestDiff = 1 << 30;
+  for (int i = 0; i < count; i++) {
+    int d = opts[i] > value ? opts[i] - value : value - opts[i];
+    if (d < bestDiff) {
+      bestDiff = d;
+      best = i;
+    }
+  }
+  return best;
+}
+
+static void refreshSmoothingLabels() {
+  if (medianCycleLabel) {
+    lv_label_set_text(
+        medianCycleLabel,
+        kMedianLabels[nearestOptIndex(kMedianOpts, kMedianCount,
+                                      tempSmoothingMedian())]);
+  }
+  if (emaCycleLabel) {
+    lv_label_set_text(emaCycleLabel,
+                      kEmaLabels[nearestOptIndex(kEmaOpts, kEmaCount,
+                                                 tempSmoothingEmaX100())]);
+  }
+}
+
+static void medianCycleCb(lv_event_t *e) {
+  int i = nearestOptIndex(kMedianOpts, kMedianCount, tempSmoothingMedian());
+  tempSmoothingSetMedian(kMedianOpts[(i + 1) % kMedianCount]);
+  refreshSmoothingLabels();
+}
+
+static void emaCycleCb(lv_event_t *e) {
+  int i = nearestOptIndex(kEmaOpts, kEmaCount, tempSmoothingEmaX100());
+  tempSmoothingSetEmaX100(kEmaOpts[(i + 1) % kEmaCount]);
+  refreshSmoothingLabels();
+}
 
 // Temp readout tile: black background box + small caption + colored number,
 // matching the old (non-LVGL) dashboard's drawTempTile()/drawRorTile() look
@@ -603,6 +659,8 @@ static void lvglStopBtnCb(lv_event_t *e) {
 // from the live dashboard, not something that needs to feel polished yet.
 static void configOpenBtnCb(lv_event_t *e) { lv_screen_load(configScreen); }
 static void configBackBtnCb(lv_event_t *e) { lv_screen_load(mainScreen); }
+static void smoothingOpenBtnCb(lv_event_t *e) { lv_screen_load(smoothingScreen); }
+static void smoothingBackBtnCb(lv_event_t *e) { lv_screen_load(configScreen); }
 
 // One-shot (lv_timer_set_repeat_count(timer, 1)) -- LVGL deletes a
 // non-repeating timer itself right after this callback returns, so there's
@@ -1049,6 +1107,15 @@ void lvglInit() {
   lv_obj_center(rebootLabel);
   lv_obj_add_event_cb(rebootBtn, rebootBtnCb, LV_EVENT_CLICKED, NULL);
 
+  // ---- Smoothing sub-screen shortcut --------------------------------------
+  lv_obj_t *smoothingBtn = lv_button_create(configScreen);
+  lv_obj_set_size(smoothingBtn, 128, 30);
+  lv_obj_set_pos(smoothingBtn, 182, 204);
+  lv_obj_t *smoothingBtnLabel = lv_label_create(smoothingBtn);
+  lv_label_set_text(smoothingBtnLabel, "Smoothing " LV_SYMBOL_RIGHT);
+  lv_obj_center(smoothingBtnLabel);
+  lv_obj_add_event_cb(smoothingBtn, smoothingOpenBtnCb, LV_EVENT_CLICKED, NULL);
+
   // ---- Ambient (online weather) readout -----------------------------------
   // Temp/pressure/humidity fetched by weather.cpp (plain HTTP from the PC
   // proxy) and also sent to Artisan as AT/AP/AH. Numbers only -- the montserrat
@@ -1062,6 +1129,48 @@ void lvglInit() {
   lv_label_set_text(ambientLabel, "--");
 
   Serial.println("[LVGL] config screen built");
+
+  // ---- Smoothing screen: median + EMA cycle selectors (ET/BT) -------------
+  smoothingScreen = lv_obj_create(NULL);
+  lv_obj_clear_flag(smoothingScreen, LV_OBJ_FLAG_SCROLLABLE);
+
+  lv_obj_t *smBack = lv_button_create(smoothingScreen);
+  lv_obj_set_size(smBack, 90, 30);
+  lv_obj_set_pos(smBack, 6, 6);
+  lv_obj_t *smBackLabel = lv_label_create(smBack);
+  lv_label_set_text(smBackLabel, LV_SYMBOL_LEFT " Back");
+  lv_obj_center(smBackLabel);
+  lv_obj_add_event_cb(smBack, smoothingBackBtnCb, LV_EVENT_CLICKED, NULL);
+
+  lv_obj_t *smTitle = lv_label_create(smoothingScreen);
+  lv_obj_set_pos(smTitle, 6, 48);
+  lv_label_set_text(smTitle, "Smoothing (ET / BT)");
+
+  lv_obj_t *medCap = lv_label_create(smoothingScreen);
+  lv_obj_set_pos(medCap, 6, 96);
+  lv_label_set_text(medCap, "Median window:");
+  lv_obj_t *medBtn = lv_button_create(smoothingScreen);
+  lv_obj_set_size(medBtn, 96, 40);
+  lv_obj_set_pos(medBtn, 200, 90);
+  medianCycleLabel = lv_label_create(medBtn);
+  lv_obj_center(medianCycleLabel);
+  lv_obj_add_event_cb(medBtn, medianCycleCb, LV_EVENT_CLICKED, NULL);
+
+  lv_obj_t *emaCap = lv_label_create(smoothingScreen);
+  lv_obj_set_pos(emaCap, 6, 152);
+  lv_label_set_text(emaCap, "EMA weight:");
+  lv_obj_t *emaBtn = lv_button_create(smoothingScreen);
+  lv_obj_set_size(emaBtn, 96, 40);
+  lv_obj_set_pos(emaBtn, 200, 146);
+  emaCycleLabel = lv_label_create(emaBtn);
+  lv_obj_center(emaCycleLabel);
+  lv_obj_add_event_cb(emaBtn, emaCycleCb, LV_EVENT_CLICKED, NULL);
+
+  lv_obj_t *smHint = lv_label_create(smoothingScreen);
+  lv_obj_set_pos(smHint, 6, 206);
+  lv_label_set_text(smHint, "Bigger = smoother, slower. Live on ET/BT.");
+
+  refreshSmoothingLabels(); // seed both buttons with the persisted values
 
   // ---- Splash screen -------------------------------------------------------
   // Title + tagline, faded in then out as one unit via lv_obj_fade_in()/

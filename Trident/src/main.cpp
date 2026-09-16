@@ -21,6 +21,7 @@
 #include "state_request_queue.h"
 #include "touch.h"
 #include "weather.h"
+#include "temp_smoothing.h"
 #include "wifi_setup.h"
 
 // -----------------------------------------------------------------------------
@@ -204,6 +205,9 @@ void setup() {
   // must come after it. No-op on non-S3 builds.
   etSensorInit();
   bt2SensorInit();
+  // Push the persisted ET/BT smoothing (median window + EMA) onto the probes,
+  // overriding their constructor defaults, before the Smoothing screen is built.
+  tempSmoothingApply();
   lvglInit(); // minimal LVGL bring-up (lvgl-ui branch), see displayLoop()
   myPID.SetOutputLimits(0, 95);
   delay(5000);

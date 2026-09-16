@@ -60,7 +60,7 @@ Max31865Probe::Max31865Probe(int csPin, float rref, float rnominal,
     : _csPin(csPin), _rref(rref), _rnominal(rnominal),
       _wireCfgBit(threeWire ? CFG_3WIRE : 0), _logCat(logCat), _tag(tag),
       _sampleIntervalMs(sampleIntervalMs),
-      _spiSettings(1000000, MSBFIRST, SPI_MODE1), _filter(7) {}
+      _spiSettings(1000000, MSBFIRST, SPI_MODE1) {}
 
 // --- Raw register I/O -----------------------------------------------------
 // Deliberately not using Adafruit_MAX31865's own read path: its readRTD()
@@ -166,13 +166,10 @@ void Max31865Probe::tick(char corF) {
   }
   _badCount = 0;
 
-  // Stage 1: median-7 -> rejects short bursts (up to 3 of 7) of corrupted SPI
-  // reads before the EMA. AddValue() returns the freshly computed median, so
-  // read that directly. (For window 3 GetFiltered() would be stale -- its fast
-  // path addValue3 skips updating _lastFiltered; the window-!=3 path used here
-  // does update it, but reading AddValue()'s return keeps this independent of
-  // the window size.)
-  double m = _filter.AddValue(v);
+  // Stage 1: median of the last _medWindow samples (window live-settable via
+  // setMedianWindow(); 1 = passthrough). Rejects short bursts of corrupted SPI
+  // reads before the EMA.
+  double m = medianPush(v);
 
   // Stage 2: EMA -> the actual noise damping, level set by setFilter().
   if (!_emaSeeded) {
@@ -198,4 +195,52 @@ void Max31865Probe::setFilter(int filtPercent) {
   _emaPrevWeight = filtPercent / 100.0f;
   D_printf(_logCat, "%s FILT set to %d (EMA prev-weight %.2f)\n", _tag,
            filtPercent, _emaPrevWeight);
+}
+
+void Max31865Probe::setMedianWindow(int window) {
+  if (window < 1) {
+    window = 1;
+  } else if (window > MED_MAX) {
+    window = MED_MAX;
+  }
+  _medWindow = window;
+  D_printf(_logCat, "%s median window set to %d\n", _tag, _medWindow);
+}
+
+// Push v into the ring and return the median of the most recent _medWindow
+// samples. window 1 (or before the ring has filled to the window) = passthrough.
+double Max31865Probe::medianPush(double v) {
+  _medBuf[_medIdx] = v;
+  _medIdx = (_medIdx + 1) % MED_MAX;
+  if (_medCount < MED_MAX) {
+    _medCount++;
+  }
+
+  int win = _medWindow;
+  if (win < 1) {
+    win = 1;
+  } else if (win > MED_MAX) {
+    win = MED_MAX;
+  }
+  int n = win < _medCount ? win : _medCount; // usable count so far
+  if (n <= 1) {
+    return v; // off, or not enough history yet
+  }
+
+  double tmp[MED_MAX];
+  for (int i = 0; i < n; i++) {
+    int idx = (_medIdx - 1 - i + 2 * MED_MAX) % MED_MAX; // walk back from newest
+    tmp[i] = _medBuf[idx];
+  }
+  // insertion sort (n <= 9)
+  for (int i = 1; i < n; i++) {
+    double key = tmp[i];
+    int j = i - 1;
+    while (j >= 0 && tmp[j] > key) {
+      tmp[j + 1] = tmp[j];
+      j--;
+    }
+    tmp[j + 1] = key;
+  }
+  return tmp[n / 2];
 }

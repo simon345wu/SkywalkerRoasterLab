@@ -40,3 +40,7 @@ double bt2Report();
 // capped at 99 so it can't freeze). Default 70. Driven by the serial
 // "FILT;<et>;<bt>;..." command's second value.
 void bt2SetFilter(int filtPercent);
+
+// Set the BT stage-1 median window: 1 (off) / 3 / 5 / 7 / 9. Driven by the
+// touchscreen Smoothing screen (temp_smoothing.h).
+void bt2SetMedianWindow(int window);

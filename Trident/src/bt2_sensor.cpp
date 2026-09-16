@@ -42,6 +42,8 @@ double bt2Report() { return bt2Probe.healthy() ? bt2Temp : temp; }
 
 void bt2SetFilter(int filtPercent) { bt2Probe.setFilter(filtPercent); }
 
+void bt2SetMedianWindow(int window) { bt2Probe.setMedianWindow(window); }
+
 #else // non-S3 builds: no BT2 probe, BT mirrors NTC (pre-sensor behaviour)
 
 extern double temp;
@@ -50,5 +52,6 @@ void bt2SensorTick() {}
 bool bt2SensorHealthy() { return false; }
 double bt2Report() { return temp; }
 void bt2SetFilter(int filtPercent) {}
+void bt2SetMedianWindow(int window) {}
 
 #endif

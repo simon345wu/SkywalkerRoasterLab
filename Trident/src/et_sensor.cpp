@@ -37,6 +37,8 @@ double etReport() { return etProbe.healthy() ? etTemp : bt2Report(); }
 
 void etSetFilter(int filtPercent) { etProbe.setFilter(filtPercent); }
 
+void etSetMedianWindow(int window) { etProbe.setMedianWindow(window); }
+
 #else // non-S3 builds: no ET probe, ET mirrors BT (pre-sensor behaviour)
 
 extern double temp;
@@ -45,5 +47,6 @@ void etSensorTick() {}
 bool etSensorHealthy() { return false; }
 double etReport() { return temp; }
 void etSetFilter(int filtPercent) {}
+void etSetMedianWindow(int window) {}
 
 #endif

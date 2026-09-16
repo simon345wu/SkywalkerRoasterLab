@@ -34,3 +34,7 @@ double etReport();
 // capped at 99 so it can't freeze). Default 70. Driven by the serial
 // "FILT;<et>;<bt>;..." command; only the ET (first) value is used.
 void etSetFilter(int filtPercent);
+
+// Set the ET stage-1 median window: 1 (off) / 3 / 5 / 7 / 9. Driven by the
+// touchscreen Smoothing screen (temp_smoothing.h).
+void etSetMedianWindow(int window);
