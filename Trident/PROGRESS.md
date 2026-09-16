@@ -528,8 +528,8 @@ User wired a **second** MAX31865, PT1000, 4-wire, CS=GPIO39, sharing the same to
 
 **Real fix:** `-D CORE_DEBUG_LEVEL=0` added to `platformio.ini`'s shared `build_flags`. This makes `log_e()`/`log_w()`/... compile to no-ops across every bundled library, so `ets_printf()` is never called at all -- compile-time, not runtime interception. Verified clean against the exact repro (`CHAN`/`READ`/`FILT` over USB serial with a WebSerial client connected) that had shown the corruption moments earlier with the old fix still in place. `esp_log_set_vprintf(droppedVprintf)` is left in main.cpp too (harmless, and still worth having for genuine ESP-IDF-native log calls from other components).
 
+**User-confirmed 2026-09-16:** 5-tile dashboard row layout looks correct on the physical screen (montserrat_18 sizing was fine as calculated, no clipping/crowding); `BT2_RREF=4300` is correct for this second breakout too.
+
 ### Open items
-- Verify `BT2_RREF` against the actual second breakout (same process as ET's: read a room-temp RTD value, check it lands close to expected).
 - Validate PID control behavior on the new BT input during a real roast.
-- Eyeball the 5-tile dashboard row on the physical screen -- montserrat_18 sizing was a calculated estimate, not yet visually confirmed.
 - All earlier open items (Artisan ET-curve/roast validation, etc.) still apply.
