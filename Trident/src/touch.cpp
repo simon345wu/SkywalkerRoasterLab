@@ -21,7 +21,6 @@ void sendStop() {}
 bool touchSessionActive = false;
 
 namespace {
-const int STEP = 5;
 const int SCREEN_WIDTH = 320;
 const int SCREEN_HEIGHT = 240;
 
@@ -35,56 +34,12 @@ const int TS_MAXY = 3651; // raw p.y at the top edge (screenY = 0)
 
 XPT2046_Touchscreen touchScreen(TOUCH_CS);
 
-bool pointInRect(int x, int y, int rx, int ry, int rw, int rh) {
-  return x >= rx && x < (rx + rw) && y >= ry && y < (ry + rh);
-}
-
 uint8_t clampPercent(int value) {
   if (value < 0)
     return 0;
   if (value > 100)
     return 100;
   return (uint8_t)value;
-}
-
-void handleTouch(int screenX, int screenY) {
-  StateRequestT current = getCurrentState();
-
-  if (pointInRect(screenX, screenY, BTN_FAN_ZERO_X, BTN_FAN_ROW_Y, BTN_WIDTH,
-                   BTN_HEIGHT)) {
-    sendFan(0);
-  } else if (pointInRect(screenX, screenY, BTN_FAN_MINUS_X, BTN_FAN_ROW_Y,
-                          BTN_WIDTH, BTN_HEIGHT)) {
-    sendFan(current.fan - STEP);
-  } else if (pointInRect(screenX, screenY, BTN_FAN_PLUS_X, BTN_FAN_ROW_Y,
-                          BTN_WIDTH, BTN_HEIGHT)) {
-    sendFan(current.fan + STEP);
-  } else if (pointInRect(screenX, screenY, BTN_FAN_MAX_X, BTN_FAN_ROW_Y,
-                          BTN_WIDTH, BTN_HEIGHT)) {
-    sendFan(100);
-  } else if (pointInRect(screenX, screenY, BTN_HEAT_ZERO_X, BTN_HEAT_ROW_Y,
-                          BTN_WIDTH, BTN_HEIGHT)) {
-    sendHeat(0);
-  } else if (pointInRect(screenX, screenY, BTN_HEAT_MINUS_X, BTN_HEAT_ROW_Y,
-                          BTN_WIDTH, BTN_HEIGHT)) {
-    sendHeat(current.heater - STEP);
-  } else if (pointInRect(screenX, screenY, BTN_HEAT_PLUS_X, BTN_HEAT_ROW_Y,
-                          BTN_WIDTH, BTN_HEIGHT)) {
-    sendHeat(current.heater + STEP);
-  } else if (pointInRect(screenX, screenY, BTN_HEAT_MAX_X, BTN_HEAT_ROW_Y,
-                          BTN_WIDTH, BTN_HEIGHT)) {
-    sendHeat(100);
-  } else if (pointInRect(screenX, screenY, BTN_DRUM_X, BTN_DRUM_Y,
-                          BTN_DRUM_WIDTH, BTN_DRUM_HEIGHT)) {
-    sendDrum(current.drum != 0 ? 0 : 100);
-  } else if (pointInRect(screenX, screenY, BTN_COOL_X, BTN_COOL_Y,
-                          BTN_COOL_WIDTH, BTN_COOL_HEIGHT)) {
-    sendCool(current.cooling != 0 ? 0 : 100);
-  } else if (pointInRect(screenX, screenY, BTN_STOP_X, BTN_STOP_Y,
-                          BTN_STOP_WIDTH, BTN_STOP_HEIGHT)) {
-    D_println(LOG_TOUCH, "Touch: STOP pressed");
-    sendStop();
-  }
 }
 } // namespace
 
@@ -143,18 +98,13 @@ void sendStop() {
   touchSessionActive = false;
 }
 
-// lvgl-ui branch: deliberately a no-op for now, not deleted. The old
-// dispatch below (handleTouch() -> sendFan()/sendHeat()/.../sendStop() ->
-// enqueueStateRequest()) fires real heater/fan/drum/cooling commands, but
-// this branch's screen no longer draws those buttons -- reading the panel
-// here and dispatching against those (now invisible) button coordinates
-// would let a tap silently drive real hardware blind. Touch reads now also
-// happen from the LVGL indev read callback in display.cpp, on displayLoop's
-// task; calling touchGetPoint() here too would mean two tasks hitting the
-// touch controller's SPI bus concurrently -- same class of problem as the
-// lv_timer_handler() race this branch already hit once. Once the real
-// dashboard is rebuilt in LVGL, this dispatch either moves to LVGL widget
-// event callbacks (most likely) or this loop resumes calling
-// touchGetPoint() itself if LVGL input isn't in the picture for it.
+// No-op: touch input is handled entirely by the LVGL widget event callbacks
+// (the dashboard sliders/buttons in display.cpp call sendFan()/sendHeat()/... ->
+// the command queue), and the panel itself is read from the LVGL indev read
+// callback in display.cpp on displayLoop's task. Reading/dispatching here too
+// would put a second task on the touch controller's SPI bus (the same class of
+// race this branch hit once). Kept as a stub because loop() still calls it, in
+// case a future non-LVGL path needs it. The old pointInRect()/handleTouch()
+// coordinate-dispatch this used to hold was removed as dead code.
 void touchLoop() {}
 #endif
