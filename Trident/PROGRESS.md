@@ -575,7 +575,25 @@ User noticed HEAT/FAN updating late and dropping out. `dropped=0` ruled out the 
 
 `[HEAP]` and `[WSRATE]` lines are on category `LOG_WS` (silence at runtime with `LOG;WS;OFF`). Pending user decision: keep as-is, move to a dedicated `LOG_DIAG` category defaulting off, or remove. All the queue guard / `setCloseClientOnQueueFull(false)` / comms-mode changes are keepers regardless.
 
+### Follow-ups the same session: serial TC4 extras, HELP, LOG_DIAG (committed 555210a)
+
+- **Serial TC4 READ extended** (`main.cpp`) from `ambient,ET,BT,heater,fan` to `AT,ET,BT,NTC,AT,AP,AH`, mirroring the WebSocket getData fields so Artisan's `+ArduinoTC4 34`/`56` extra devices can read NTC/AT/AP/AH over USB too. Field 0 (ambient) carries AT, so Artisan's ambient reading is populated for free. heater/fan are deliberately dropped from READ — like HEAT/FAN over WebSocket they belong in Artisan Events, not read channels.
+- **CHAN** now echoes Artisan's own channel-map argument instead of the hardcoded `# Active channels set to 2100` (aArtisan's real behaviour). How many fields Artisan reads is driven by its device config, not this ack.
+- **`LOG_DIAG` category added** (dlog.h/.cpp, default off): the `[HEAP]`/`[WSRATE]`/queue-drop diagnostics moved off `LOG_WS` onto it, so WebSerial is quiet by default and `LOG;DIAG;ON` brings them back. (Resolves the "diagnostic logging cleanup pending" note above.)
+- **WebSerial `HELP` / `?` command** (`main.cpp` `helpHandleCommand`, intercepted before the TC4 parser). Gotcha: WebSerial sends one WS message *per newline* and its queue only holds ~20 msg/s worth — a first ~25-line version dropped its opening lines under the burst, so the help is compressed to ~8 dense lines.
+
+### MAX31865 temperature spikes — self-inflicted by per-sample fault handling (committed ce044a0)
+
+Artisan showed occasional sharp BT/ET glitches, and the RoR/delta curves amplified each into a big spike. Diagnosed by comparing against a spike-free sibling firmware, `C:\myproject\TEST_SkyCommand_Node32s` (ESP32 NodeMCU-32S, **same** MAX31865 wiring): both run the chip in continuous auto-convert mode and read the RTD register directly, but Trident additionally reacted to the fault bit on **every** sample.
+
+Root cause in `max31865.cpp` `tick()`: on a set fault bit it (a) wrote `CFG_FAULTCLEAR` — which disturbs the very next continuous conversion — and (b) re-seeded the EMA (`_emaSeeded = false`), so the next good value *snapped* straight onto the curve instead of being smoothed. A single transient/spurious fault therefore produced a visible spike. (The reference build's own comment spells it out: in continuous mode, don't run the fault-detect/clear cycle — it interferes with auto-conversion.)
+
+Fix (mirror the reference): stop branching on the per-sample fault bit — just use the RTD value; re-arm continuous mode + clear any latched fault only **periodically (~5 s)** to self-heal a brownout/glitch; and on a genuinely out-of-range read, skip the sample while **keeping** the EMA state (re-seed only after ≥3 consecutive bad reads, so a real probe recovery still snaps rather than crawls). New members `_lastArmMs`, `_badCount`. **Spikes confirmed gone on hardware.**
+
+Also (earlier the same session, on a wrong "under-filtering" hunch that this fix superseded): stage-1 median window widened 3 → 7 to match NTC, still reading `AddValue()`'s return (valid for window != 3). Kept as a harmless extra spike-guard; adds a little lag, can be dialled back for more responsiveness.
+
 ### Open items (this session)
-- Decide the fate of the `[HEAP]`/`[WSRATE]` diagnostic logging (see above).
-- Artisan `.aset` after the user's GUI rebuild: ambient **Pressure vs Humidity** sources look swapped (`AmbientPressureSource`/`AmbientHumiditySource` point at AH/AP respectively under the extra-device enumeration) — user to verify against the known proxy values (~24.1 °C / 1011.6 hPa / 77 %) and reselect if needed. Leftover `BurnerVal, FanVal, AIR` entries still sit in `channel_nodes` positions 3-5 but are unrequested/harmless.
+- **Serial-over-USB to Artisan wedges the board (white screen).** Confirmed it happens the moment Artisan opens COM9, before any data — this Goouuu board's auto-reset circuit reacts to the port's DTR/RTS (same reason `pio device monitor` needs `--rts 0 --dtr 0`); the CH340 even de-enumerated once, requiring an unplug/replug. Workaround: **use the WebSocket device, not USB serial, for Artisan** (USB stays for flashing). A hardware fix (cap on EN, or cutting the DTR/RTS→EN/IO0 auto-reset trace) would make serial usable but breaks auto-flashing. So the extended serial TC4 6-channel readout is still unverified end-to-end through Artisan.
+- Artisan `.aset` ambient **Pressure vs Humidity** sources look swapped (`AmbientPressureSource`/`AmbientHumiditySource` at AH/AP under the extra-device enumeration) — verify against ~1011.6 hPa / 77 % and reselect if needed. Leftover `BurnerVal, FanVal, AIR` entries still sit in `channel_nodes` positions 3-5 but are unrequested/harmless.
 - `.aset` `compression=true` is a no-op: this ESPAsyncWebServer fork implements no WebSocket permessage-deflate (confirmed by source grep), so it's never negotiated.
+- Consider a PR merging `ambient-weather-http` into `main`.
