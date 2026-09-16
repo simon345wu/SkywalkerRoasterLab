@@ -597,3 +597,38 @@ Also (earlier the same session, on a wrong "under-filtering" hunch that this fix
 - Artisan `.aset` ambient **Pressure vs Humidity** sources look swapped (`AmbientPressureSource`/`AmbientHumiditySource` at AH/AP under the extra-device enumeration) — verify against ~1011.6 hPa / 77 % and reselect if needed. Leftover `BurnerVal, FanVal, AIR` entries still sit in `channel_nodes` positions 3-5 but are unrequested/harmless.
 - `.aset` `compression=true` is a no-op: this ESPAsyncWebServer fork implements no WebSocket permessage-deflate (confirmed by source grep), so it's never negotiated.
 - Consider a PR merging `ambient-weather-http` into `main`.
+
+## 2026-09-17 — Touchscreen temp smoothing, selectable BT source, sensor rename
+
+### Temperature smoothing as touchscreen options (ET/BT)
+
+The two smoothing stages are now selectable from the touchscreen (Config -> "Smoothing"), global for both ET and BT, persisted in NVS and applied live -- no reboot, and no locking needed because the sensor ticks and the LVGL callbacks run on the same displayLoop task.
+
+- Stage 1 median window: `Off / 3 / 5 / 7 / 9`; Stage 2 EMA weight: `Off / 0.5 / 0.7 / 0.8 / 0.9`. Defaults median 7 / EMA 0.70 (= the prior hard-coded behaviour).
+- `max31865.cpp`: the fixed-window MedianFilterLib stage-1 filter was replaced with a small self-contained median-of-N over a ring of the last 9 samples, window live-settable via `setMedianWindow()`. This also drops the dependency on MedianFilterLib's window-3 `GetFiltered()` quirk (the reason the old code read `AddValue()`'s return).
+- New `temp_smoothing.h/.cpp` (NVS-backed, one setting for both probes); `et_probe`/`bt_probe` gained `*SetMedianWindow()` wrappers; `main.cpp` calls `tempSmoothingApply()` after sensor init.
+- Artisan's serial `FILT` still overrides the EMA weight live for a session (both write the probe's EMA weight, last-write-wins). NTC's own smoothing (median-7, no EMA) is unchanged -- out of scope (a "Phase 2" if NTC should also honour the touch controls).
+
+### Selectable BT source: MAX31865 #2 probe or the roaster's own NTC
+
+BT used to be the second MAX31865 with a silent auto-fallback to NTC on fault. It's now a **user choice** on the Smoothing sub-screen (`31865 / NTC`), persisted in NVS, live.
+
+- `bt_probe`: `BtSource {MAX31865, NTC}`. `btReport()` and the BT RoR follow the effective source = the probe when selected AND healthy, else NTC -- one rule covering both the explicit NTC choice and the fault auto-fallback. Affects everything BT: TC4/WebSocket/BLE reports, the dashboard BT + BT RoR tiles, and **the PID control input** (choosing NTC means PID controls on NTC).
+- `display.cpp`: the dashboard BT tile now shows the effective BT via `btReport()` instead of `--.-` when the probe is absent/faulted.
+
+### Sensor file + symbol rename (readability, no behaviour change)
+
+`bt2_sensor` was misleading -- that probe IS the reported BT, not a "second BT". Renamed:
+- files: `et_sensor.* -> et_probe.*`, `bt2_sensor.* -> bt_probe.*` (via `git mv`).
+- symbols: `bt2* -> bt*` (`btReport`, `btTemp`, `btRor`, `btSensorInit/Tick/Healthy`, `btSetFilter`, `btSetMedianWindow`, `btGetSource`, `btSetSource`, `btProbe`); `BT2_* -> BT_*`; `LOG_BT2 -> LOG_BT` (so the WebSerial command is now `LOG;BT;ON`); tag `[BT2] -> [BT]`.
+- collision fix: `SkiComms.h`'s `RorTracker btRor` was actually the **NTC's** RoR -> renamed `ntcRor`, freeing `btRor` for the real BT RoR global. (`display.cpp`'s `btRorLabel` UI pointer is a different name, left alone.)
+- Kept as-is (Level 1 scope, decided with user): the `et*` symbols, and the NTC globals `temp`/`ror`.
+- **`sed -i` gotcha:** rewriting `*.cpp *.h` flipped every file's line endings (CRLF->LF). Git's autocrlf normalised most of that away on `git add`, but `Display_ST7789.*` (dead scaffold) showed a 562-line EOL-only churn -- restored with `git checkout HEAD --` so only real changes went in. Worth `git diff --cached --stat` after any repo-wide `sed`.
+
+### Also cleaned
+- `touch.cpp`: removed the dead `pointInRect()`/`handleTouch()` coordinate dispatch (unused since LVGL took over touch); `touchLoop()` stays an empty stub (still called from `loop()`).
+
+### Open items
+- BT source: user to confirm on hardware that switching to NTC makes the BT tile match the NTC tile, and that the probe-fault fallback still works.
+- Serial-over-USB white-screen (DTR/RTS) still stands -- use WebSocket for Artisan.
+- NTC two-stage smoothing (Phase 2) if the touch smoothing controls should also cover NTC.
