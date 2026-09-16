@@ -19,10 +19,11 @@ const int TX_PIN = 12;
 const int RGB_PIN = 8;
 #endif
 
-// MAX31865 (ET probe) chip-select. Shares the touch controller's SPI bus
-// (SCLK=42, MISO=41, MOSI=2 -- see display.h); this is its own dedicated CS,
+// MAX31865 chip-selects. Both share the touch controller's SPI bus (SCLK=42,
+// MISO=41, MOSI=2 -- see display.h); each has its own dedicated CS pin,
 // physically next to the touch MISO/CLK pins on the header. S3 board only.
 #if defined(S3)
-const int ET_CS_PIN = 40;
+const int ET_CS_PIN = 40;  // ET probe (PT100)
+const int BT2_CS_PIN = 39; // BT probe (PT1000)
 #endif
 #endif

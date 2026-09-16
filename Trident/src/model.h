@@ -23,8 +23,9 @@ typedef struct {
 } StateRequestT;
 
 typedef struct {
-  double temp; // BT (roaster's own probe)
-  double et;   // ET (external MAX31865 probe, or BT mirrored when none)
+  double bt;  // BT (external MAX31865 #2/PT1000 probe, or NTC mirrored when none)
+  double et;  // ET (external MAX31865 #1/PT100 probe, or BT mirrored when none)
+  double ntc; // NTC (roaster's own built-in probe, always the raw reading)
   StateRequestT request;
 } StateDataT;
 

@@ -12,6 +12,7 @@
 #include "SkiCMD.h"
 #include "api.h"
 #include "ble.h"
+#include "bt2_sensor.h"
 #include "display.h"
 #include "et_sensor.h"
 #include "model.h"
@@ -150,9 +151,10 @@ void setup() {
   // read callback (display.cpp) calls into touch.cpp's touchGetPoint(),
   // which needs the XPT2046 hardware already begun.
   touchInit();
-  // ET probe (MAX31865) shares the SPI bus touchInit() just brought up -- must
-  // come after it. No-op on non-S3 builds.
+  // ET/BT probes (MAX31865) share the SPI bus touchInit() just brought up --
+  // must come after it. No-op on non-S3 builds.
   etSensorInit();
+  bt2SensorInit();
   lvglInit(); // minimal LVGL bring-up (lvgl-ui branch), see displayLoop()
   myPID.SetOutputLimits(0, 95);
   delay(5000);
@@ -199,13 +201,13 @@ void setup() {
 StateRequestT _currentState = {0};
 void webSocketLoop() {
   handleREAD();
-  StateDataT data = {temp, etReport(), _currentState};
+  StateDataT data = {bt2Report(), etReport(), temp, _currentState};
   StateRequestT req = socketTick(data);
 }
 
 void bleLoop() {
 
-  StateDataT data = {temp, etReport(), _currentState};
+  StateDataT data = {bt2Report(), etReport(), temp, _currentState};
   StateRequestT req = bleTick(data);
 }
 
@@ -214,10 +216,12 @@ void handleSerialCommand(String command) {
   CommandTypeT type = classifyCommandType(command);
   if (type == CMDType_READ) {
 
-    // TC4 READ reply: ambient, ET, BT, heater, fan. ET = MAX31865 probe
-    // (etReport() falls back to BT when no probe / faulted); BT = roaster's
-    // own probe. skywalker.aset maps arduinoETChannel=1, arduinoBTChannel=2.
-    String readMsg = "0," + String(etReport(), 1) + "," + String(temp, 1) + "," +
+    // TC4 READ reply: ambient, ET, BT, heater, fan. ET = MAX31865 #1 probe
+    // (etReport() falls back to BT when no probe / faulted); BT = MAX31865 #2
+    // probe (bt2Report() falls back to NTC, the roaster's own probe, when no
+    // probe / faulted). skywalker.aset maps arduinoETChannel=1,
+    // arduinoBTChannel=2.
+    String readMsg = "0," + String(etReport(), 1) + "," + String(bt2Report(), 1) + "," +
                      String(_currentState.heater) + "," +
                      String(_currentState.fan) + "\r\n";
     Serial.println(readMsg);
@@ -275,10 +279,11 @@ void webSerialLoop(void *params) {
 void displayLoop(void *params) {
   while (1) {
     lvglLoop();
-    // Same task as the LVGL touch-SPI reads -- keeps the shared touch/ET SPI
-    // bus single-threaded without a lock. Self rate-limited to its own
-    // sampling interval, so this is cheap on most iterations.
+    // Same task as the LVGL touch-SPI reads -- keeps the shared touch/ET/BT
+    // SPI bus single-threaded without a lock. Both self rate-limited to their
+    // own sampling interval, so this is cheap on most iterations.
     etSensorTick();
+    bt2SensorTick();
     delay(5);
   }
   vTaskDelete(NULL);

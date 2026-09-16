@@ -115,8 +115,9 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
     root["id"] = ln_id;
     if (isGetDataPoll) {
       wsHandshakeDone = true;
-      root["data"]["ET"] = state.et;   // external MAX31865 probe (or BT mirrored)
-      root["data"]["BT"] = state.temp; // roaster's own probe
+      root["data"]["ET"] = state.et;   // external MAX31865 #1 probe (or BT mirrored)
+      root["data"]["BT"] = state.bt;   // external MAX31865 #2 probe (or NTC mirrored)
+      root["data"]["NTC"] = state.ntc; // roaster's own built-in probe, raw
       root["data"]["BurnerVal"] = state.request.heater;
       root["data"]["FanVal"] = state.request.fan;
       root["data"]["Drum"] = state.request.drum;

@@ -6,8 +6,8 @@
 static bool categoryEnabled[LOG_CATEGORY_COUNT];
 
 static const char *kCategoryNames[LOG_CATEGORY_COUNT] = {
-    "SYS", "WIFI", "BLE",   "WS",    "ROASTER", "ET",
-    "ROR", "CMD",  "PID",   "TOUCH", "QUEUE",   "WEATHER",
+    "SYS", "WIFI", "BLE",  "WS",  "ROASTER", "ET",
+    "BT2", "ROR",  "CMD",  "PID", "TOUCH",   "QUEUE",  "WEATHER",
 };
 
 void logInit() {
@@ -15,6 +15,7 @@ void logInit() {
   // High-frequency, per-sample categories start quiet.
   categoryEnabled[LOG_ROASTER] = false;
   categoryEnabled[LOG_ET] = false;
+  categoryEnabled[LOG_BT2] = false;
   categoryEnabled[LOG_ROR] = false;
 }
 

@@ -192,6 +192,7 @@ void displayDashboard(float temp, float ror, uint8_t heat, uint8_t fan,
 // object, before any of the dashboard gets rebuilt as LVGL widgets.
 // -----------------------------------------------------------------------------
 #include "ble.h"
+#include "bt2_sensor.h"
 #include "et_sensor.h"
 #include "touch.h"
 #include "weather.h"
@@ -333,10 +334,11 @@ static lv_obj_t *splashScreen = nullptr;
 static lv_obj_t *mainScreen = nullptr;
 static lv_obj_t *configScreen = nullptr;
 
-static lv_obj_t *tempLabel = nullptr;
-static lv_obj_t *rorLabel = nullptr;
-static lv_obj_t *etLabel = nullptr;    // external MAX31865 probe
+static lv_obj_t *btLabel = nullptr;    // external MAX31865 #2 probe
+static lv_obj_t *btRorLabel = nullptr; // BT rate-of-rise
+static lv_obj_t *etLabel = nullptr;    // external MAX31865 #1 probe
 static lv_obj_t *etRorLabel = nullptr; // ET rate-of-rise
+static lv_obj_t *ntcLabel = nullptr;   // roaster's own built-in probe, raw
 static lv_obj_t *wifiIpLabel = nullptr; // now lives on configScreen
 static lv_obj_t *bleNameLabel = nullptr; // configScreen
 static lv_obj_t *ambientLabel = nullptr; // configScreen: online ambient reading
@@ -395,11 +397,9 @@ static void darkThemeBtnCb(lv_event_t *e) { setTheme(true); }
 
 // Temp readout tile: black background box + small caption + colored number,
 // matching the old (non-LVGL) dashboard's drawTempTile()/drawRorTile() look
-// rather than LVGL's default light theme. Four of these now share one row
-// (BT / BT RoR / ET / ET RoR) instead of the two big ones the first LVGL
-// pass had -- font dropped from montserrat_40 to montserrat_24 and a
-// caption label added, since with 4 across a 320px-wide screen there's no
-// longer room for a number alone to say which reading it is.
+// rather than LVGL's default light theme. Five of these now share one row
+// (BT / BT RoR / ET / ET RoR / NTC) -- font dropped again, from montserrat_24
+// to montserrat_18, to fit the 5th (NTC) tile into the same 320px-wide row.
 static lv_obj_t *createReadoutTile(lv_obj_t *parent, int x, int y, int w,
                                    int h, const char *caption,
                                    lv_palette_t textColor) {
@@ -418,7 +418,7 @@ static lv_obj_t *createReadoutTile(lv_obj_t *parent, int x, int y, int w,
   lv_obj_align(captionLabel, LV_ALIGN_TOP_MID, 0, 1);
 
   lv_obj_t *label = lv_label_create(tile);
-  lv_obj_set_style_text_font(label, &lv_font_montserrat_24, 0);
+  lv_obj_set_style_text_font(label, &lv_font_montserrat_18, 0);
   lv_obj_set_style_text_color(label, lv_palette_main(textColor), 0);
   lv_obj_align(label, LV_ALIGN_BOTTOM_MID, 0, -2);
   return label;
@@ -615,12 +615,22 @@ static void splashFadeOutCb(lv_timer_t *timer) {
 // doesn't fight a live drag/tap out from under the person doing it.
 static void lvglRefreshCb(lv_timer_t *timer) {
   char buf[16];
-  snprintf(buf, sizeof(buf), "%.1f", temp);
-  lv_label_set_text(tempLabel, buf);
-  snprintf(buf, sizeof(buf), "%+.1f", ror);
-  lv_label_set_text(rorLabel, buf);
 
-  // ET / ET RoR from the external MAX31865 probe -- "--.-" until it has
+  // BT / BT RoR from the external MAX31865 #2 probe -- "--.-" until it has
+  // produced a fault-free reading (unplugged, faulted, or a non-S3 build).
+  // Note: this tile no longer shows the roaster's own NTC reading -- that's
+  // the NTC tile below now.
+  if (bt2SensorHealthy()) {
+    snprintf(buf, sizeof(buf), "%.1f", bt2Temp);
+    lv_label_set_text(btLabel, buf);
+    snprintf(buf, sizeof(buf), "%+.1f", bt2Ror);
+    lv_label_set_text(btRorLabel, buf);
+  } else {
+    lv_label_set_text(btLabel, "--.-");
+    lv_label_set_text(btRorLabel, "--.-");
+  }
+
+  // ET / ET RoR from the external MAX31865 #1 probe -- "--.-" until it has
   // produced a fault-free reading (unplugged, faulted, or a non-S3 build).
   if (etSensorHealthy()) {
     snprintf(buf, sizeof(buf), "%.1f", etTemp);
@@ -631,6 +641,11 @@ static void lvglRefreshCb(lv_timer_t *timer) {
     lv_label_set_text(etLabel, "--.-");
     lv_label_set_text(etRorLabel, "--.-");
   }
+
+  // NTC: the roaster's own built-in probe, unconditionally (no "probe
+  // present" concept for it -- it's always whatever the roaster last sent).
+  snprintf(buf, sizeof(buf), "%.1f", temp);
+  lv_label_set_text(ntcLabel, buf);
 
   // Same AP/STA-IP text the old (non-LVGL) dashboard showed -- the LED
   // alone tells you "connected or not" at a glance, but Artisan/HiBean
@@ -850,23 +865,29 @@ void lvglInit() {
   lv_obj_center(configBtnLabel);
   lv_obj_add_event_cb(configBtn, configOpenBtnCb, LV_EVENT_CLICKED, NULL);
 
-  // ---- Temp readouts: BT / BT RoR / ET / ET RoR (2nd row) -----------------
-  // Four equal tiles with a 4px margin on both screen edges and 4px gaps
-  // between them (75px tile width: (320 - 4*2 - 3*4) / 4). BT/BT RoR come
-  // from the roaster's own probe over the serial protocol; ET/ET RoR come
-  // from the external MAX31865 + PT100 probe (et_sensor.cpp) and show "--.-"
-  // whenever that probe is absent or faulted (see lvglRefreshCb()).
-  tempLabel = createReadoutTile(mainScreen, 4, 26, 75, 46, "BT", LV_PALETTE_RED);
-  lv_label_set_text(tempLabel, "--.-");
-  rorLabel = createReadoutTile(mainScreen, 83, 26, 75, 46, "BT RoR",
-                               LV_PALETTE_ORANGE);
-  lv_label_set_text(rorLabel, "--.-");
+  // ---- Temp readouts: BT / BT RoR / ET / ET RoR / NTC (2nd row) -----------
+  // Five equal tiles with a 3px margin on both screen edges and 3px gaps
+  // between them (61px tile width: (320 - 3*2 - 4*3) / 5). BT/BT RoR come
+  // from the external MAX31865 #2/PT1000 probe (bt2_sensor.cpp); ET/ET RoR
+  // from the external MAX31865 #1/PT100 probe (et_sensor.cpp); both show
+  // "--.-" whenever their probe is absent or faulted (see lvglRefreshCb()).
+  // NTC is the roaster's own built-in probe, shown unconditionally -- no
+  // RoR tile for it (per user request; it's still computed internally as
+  // the global `ror`/`btRor` in SkiComms.h if ever wanted later).
+  btLabel = createReadoutTile(mainScreen, 3, 26, 61, 46, "BT", LV_PALETTE_RED);
+  lv_label_set_text(btLabel, "--.-");
+  btRorLabel = createReadoutTile(mainScreen, 67, 26, 61, 46, "BT RoR",
+                                 LV_PALETTE_ORANGE);
+  lv_label_set_text(btRorLabel, "--.-");
   etLabel =
-      createReadoutTile(mainScreen, 162, 26, 75, 46, "ET", LV_PALETTE_CYAN);
+      createReadoutTile(mainScreen, 131, 26, 61, 46, "ET", LV_PALETTE_CYAN);
   lv_label_set_text(etLabel, "--.-");
-  etRorLabel = createReadoutTile(mainScreen, 241, 26, 75, 46, "ET RoR",
+  etRorLabel = createReadoutTile(mainScreen, 195, 26, 61, 46, "ET RoR",
                                  LV_PALETTE_GREEN);
   lv_label_set_text(etRorLabel, "--.-");
+  ntcLabel = createReadoutTile(mainScreen, 259, 26, 61, 46, "NTC",
+                               LV_PALETTE_YELLOW);
+  lv_label_set_text(ntcLabel, "--.-");
 
   // ---- Fan / Heat sliders -------------------------------------------------
   createSliderRow(mainScreen, 94, &fanCtx, "FAN", sendBuffer[DISP_VENT_BYTE],
