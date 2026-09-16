@@ -192,8 +192,8 @@ void displayDashboard(float temp, float ror, uint8_t heat, uint8_t fan,
 // object, before any of the dashboard gets rebuilt as LVGL widgets.
 // -----------------------------------------------------------------------------
 #include "ble.h"
-#include "bt2_sensor.h"
-#include "et_sensor.h"
+#include "bt_probe.h"
+#include "et_probe.h"
 #include "comms_mode.h"
 #include "temp_smoothing.h"
 #include "touch.h"
@@ -433,6 +433,7 @@ static void rebootBtnCb(lv_event_t *e) { ESP.restart(); }
 // Two independent stages, each a "cycle" button (tap advances to the next
 // option). Global for ET+BT, applied live via temp_smoothing.h. Median window
 // 1(off)/3/5/7/9; EMA weight *100 0(off)/50/70/80/90 shown as 0.5/0.7/0.8/0.9.
+static lv_obj_t *btSrcCycleLabel = nullptr;
 static lv_obj_t *medianCycleLabel = nullptr;
 static lv_obj_t *emaCycleLabel = nullptr;
 
@@ -458,6 +459,10 @@ static int nearestOptIndex(const int *opts, int count, int value) {
 }
 
 static void refreshSmoothingLabels() {
+  if (btSrcCycleLabel) {
+    lv_label_set_text(btSrcCycleLabel,
+                      btGetSource() == BT_SRC_NTC ? "NTC" : "31865");
+  }
   if (medianCycleLabel) {
     lv_label_set_text(
         medianCycleLabel,
@@ -480,6 +485,11 @@ static void medianCycleCb(lv_event_t *e) {
 static void emaCycleCb(lv_event_t *e) {
   int i = nearestOptIndex(kEmaOpts, kEmaCount, tempSmoothingEmaX100());
   tempSmoothingSetEmaX100(kEmaOpts[(i + 1) % kEmaCount]);
+  refreshSmoothingLabels();
+}
+
+static void btSrcCycleCb(lv_event_t *e) {
+  btSetSource(btGetSource() == BT_SRC_MAX31865 ? BT_SRC_NTC : BT_SRC_MAX31865);
   refreshSmoothingLabels();
 }
 
@@ -706,19 +716,14 @@ static void splashFadeOutCb(lv_timer_t *timer) {
 static void lvglRefreshCb(lv_timer_t *timer) {
   char buf[16];
 
-  // BT / BT RoR from the external MAX31865 #2 probe -- "--.-" until it has
-  // produced a fault-free reading (unplugged, faulted, or a non-S3 build).
-  // Note: this tile no longer shows the roaster's own NTC reading -- that's
-  // the NTC tile below now.
-  if (bt2SensorHealthy()) {
-    snprintf(buf, sizeof(buf), "%.1f", bt2Temp);
-    lv_label_set_text(btLabel, buf);
-    snprintf(buf, sizeof(buf), "%+.1f", bt2Ror);
-    lv_label_set_text(btRorLabel, buf);
-  } else {
-    lv_label_set_text(btLabel, "--.-");
-    lv_label_set_text(btRorLabel, "--.-");
-  }
+  // BT / BT RoR from the selected BT source (Config -> Smoothing: MAX31865 #2
+  // probe, or the roaster's own NTC). btReport()/btRor already resolve the
+  // choice and the auto-fallback to NTC when the probe faults, so the tile
+  // always shows the effective BT rather than "--.-".
+  snprintf(buf, sizeof(buf), "%.1f", btReport());
+  lv_label_set_text(btLabel, buf);
+  snprintf(buf, sizeof(buf), "%+.1f", btRor);
+  lv_label_set_text(btRorLabel, buf);
 
   // ET / ET RoR from the external MAX31865 #1 probe -- "--.-" until it has
   // produced a fault-free reading (unplugged, faulted, or a non-S3 build).
@@ -958,8 +963,8 @@ void lvglInit() {
   // ---- Temp readouts: BT / BT RoR / ET / ET RoR / NTC (2nd row) -----------
   // Five equal tiles with a 3px margin on both screen edges and 3px gaps
   // between them (61px tile width: (320 - 3*2 - 4*3) / 5). BT/BT RoR come
-  // from the external MAX31865 #2/PT1000 probe (bt2_sensor.cpp); ET/ET RoR
-  // from the external MAX31865 #1/PT100 probe (et_sensor.cpp); both show
+  // from the external MAX31865 #2/PT1000 probe (bt_probe.cpp); ET/ET RoR
+  // from the external MAX31865 #1/PT100 probe (et_probe.cpp); both show
   // "--.-" whenever their probe is absent or faulted (see lvglRefreshCb()).
   // NTC is the roaster's own built-in probe, shown unconditionally -- no
   // RoR tile for it (per user request; it's still computed internally as
@@ -1130,7 +1135,7 @@ void lvglInit() {
 
   Serial.println("[LVGL] config screen built");
 
-  // ---- Smoothing screen: median + EMA cycle selectors (ET/BT) -------------
+  // ---- BT source + Smoothing screen: three cycle selectors ----------------
   smoothingScreen = lv_obj_create(NULL);
   lv_obj_clear_flag(smoothingScreen, LV_OBJ_FLAG_SCROLLABLE);
 
@@ -1143,34 +1148,47 @@ void lvglInit() {
   lv_obj_add_event_cb(smBack, smoothingBackBtnCb, LV_EVENT_CLICKED, NULL);
 
   lv_obj_t *smTitle = lv_label_create(smoothingScreen);
-  lv_obj_set_pos(smTitle, 6, 48);
-  lv_label_set_text(smTitle, "Smoothing (ET / BT)");
+  lv_obj_set_pos(smTitle, 6, 42);
+  lv_label_set_text(smTitle, "BT source + Smoothing");
 
+  // Row 1: BT source (MAX31865 #2 probe vs the roaster's own NTC).
+  lv_obj_t *srcCap = lv_label_create(smoothingScreen);
+  lv_obj_set_pos(srcCap, 6, 80);
+  lv_label_set_text(srcCap, "BT source:");
+  lv_obj_t *srcBtn = lv_button_create(smoothingScreen);
+  lv_obj_set_size(srcBtn, 96, 36);
+  lv_obj_set_pos(srcBtn, 200, 74);
+  btSrcCycleLabel = lv_label_create(srcBtn);
+  lv_obj_center(btSrcCycleLabel);
+  lv_obj_add_event_cb(srcBtn, btSrcCycleCb, LV_EVENT_CLICKED, NULL);
+
+  // Row 2: stage-1 median window (both ET & BT).
   lv_obj_t *medCap = lv_label_create(smoothingScreen);
-  lv_obj_set_pos(medCap, 6, 96);
-  lv_label_set_text(medCap, "Median window:");
+  lv_obj_set_pos(medCap, 6, 126);
+  lv_label_set_text(medCap, "Median:");
   lv_obj_t *medBtn = lv_button_create(smoothingScreen);
-  lv_obj_set_size(medBtn, 96, 40);
-  lv_obj_set_pos(medBtn, 200, 90);
+  lv_obj_set_size(medBtn, 96, 36);
+  lv_obj_set_pos(medBtn, 200, 120);
   medianCycleLabel = lv_label_create(medBtn);
   lv_obj_center(medianCycleLabel);
   lv_obj_add_event_cb(medBtn, medianCycleCb, LV_EVENT_CLICKED, NULL);
 
+  // Row 3: stage-2 EMA weight (both ET & BT).
   lv_obj_t *emaCap = lv_label_create(smoothingScreen);
-  lv_obj_set_pos(emaCap, 6, 152);
-  lv_label_set_text(emaCap, "EMA weight:");
+  lv_obj_set_pos(emaCap, 6, 172);
+  lv_label_set_text(emaCap, "EMA:");
   lv_obj_t *emaBtn = lv_button_create(smoothingScreen);
-  lv_obj_set_size(emaBtn, 96, 40);
-  lv_obj_set_pos(emaBtn, 200, 146);
+  lv_obj_set_size(emaBtn, 96, 36);
+  lv_obj_set_pos(emaBtn, 200, 166);
   emaCycleLabel = lv_label_create(emaBtn);
   lv_obj_center(emaCycleLabel);
   lv_obj_add_event_cb(emaBtn, emaCycleCb, LV_EVENT_CLICKED, NULL);
 
   lv_obj_t *smHint = lv_label_create(smoothingScreen);
-  lv_obj_set_pos(smHint, 6, 206);
-  lv_label_set_text(smHint, "Bigger = smoother, slower. Live on ET/BT.");
+  lv_obj_set_pos(smHint, 6, 214);
+  lv_label_set_text(smHint, "Live. Bigger median/EMA = smoother, slower.");
 
-  refreshSmoothingLabels(); // seed both buttons with the persisted values
+  refreshSmoothingLabels(); // seed the three buttons with current values
 
   // ---- Splash screen -------------------------------------------------------
   // Title + tagline, faded in then out as one unit via lv_obj_fade_in()/

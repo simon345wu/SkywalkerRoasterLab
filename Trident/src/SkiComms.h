@@ -312,15 +312,15 @@ double calculateTemp() {
 
 // BT rate-of-rise. The Artisan-matching algorithm this used to spell out
 // inline now lives in RorTracker (ror.h/ror.cpp) so the ET channel
-// (et_sensor.cpp) runs the identical calculation instead of a hand-copied
+// (et_probe.cpp) runs the identical calculation instead of a hand-copied
 // second copy. This instance is BT's; it writes the global `ror` that the
 // dashboard and the rest of the firmware already read.
-RorTracker btRor;
+RorTracker ntcRor;
 
 // Window size must stay != 3: MedianFilterLib's window-3 fast path
 // (addValue3) never updates the field GetFiltered() reads, so GetFiltered()
 // would always return 0. Fine at 7; if this is ever lowered to 3, switch to
-// using AddValue()'s return value like et_sensor.cpp does.
+// using AddValue()'s return value like et_probe.cpp does.
 MedianFilter<double> tempFilter(7);
 void filtTemp(double v){
   int maxV = ((CorF == 'F') ? 500 : 260); //pick appropriate max cutoff given C or F units
@@ -328,7 +328,7 @@ void filtTemp(double v){
   tempFilter.AddValue(v); //add to the collection
   temp = tempFilter.GetFiltered(); //update global temp
   D_printf(LOG_ROASTER, "filtered temp: %.2f\n", temp);
-  ror = btRor.update(temp);
+  ror = ntcRor.update(temp);
 }
 
 #ifdef _ROASTER_RX_RMT_

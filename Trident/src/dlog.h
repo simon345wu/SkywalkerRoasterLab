@@ -19,8 +19,8 @@ enum LogCategory : uint8_t {
   LOG_BLE,     // ble.cpp
   LOG_WS,      // Artisan-over-WebSocket (CommandLoop.cpp)
   LOG_ROASTER, // RMT roaster comm + BT reading (SkiComms.h) -- high frequency
-  LOG_ET,      // MAX31865 ET probe (et_sensor.cpp) -- high frequency
-  LOG_BT2,     // MAX31865 BT probe (bt2_sensor.cpp) -- high frequency
+  LOG_ET,      // MAX31865 ET probe (et_probe.cpp) -- high frequency
+  LOG_BT,     // MAX31865 BT probe (bt_probe.cpp) -- high frequency
   LOG_ROR,     // rate-of-rise (ror.cpp), BT+ET combined -- high frequency
   LOG_CMD,     // TC4/serial command dispatch (SkiCMD.h)
   LOG_PID,     // PID tuning (SkiCMD.h + ble.cpp PID_* characteristics)

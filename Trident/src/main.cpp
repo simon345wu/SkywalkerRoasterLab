@@ -13,9 +13,9 @@
 #include "api.h"
 #include "ble.h"
 #include "comms_mode.h"
-#include "bt2_sensor.h"
+#include "bt_probe.h"
 #include "display.h"
-#include "et_sensor.h"
+#include "et_probe.h"
 #include "model.h"
 #include "pindef.h"
 #include "state_request_queue.h"
@@ -106,7 +106,7 @@ bool helpHandleCommand(const String &input) {
   WebSerial.println("Read: READ -> AT,ET,BT,NTC,AT,AP,AH ; CHAN handshake");
   WebSerial.println("PID: PID;ON ; PID;OFF ; PID;SV;<0-300> ; PID;T;<Kp>;<Ki>;<Kd>");
   WebSerial.println("Log: LOG (or LOG;LIST) ; LOG;<CAT>;ON|OFF ; LOG;ALL;ON|OFF");
-  WebSerial.println("Log CAT: SYS WIFI BLE WS ROASTER ET BT2 ROR CMD PID TOUCH QUEUE WEATHER DIAG");
+  WebSerial.println("Log CAT: SYS WIFI BLE WS ROASTER ET BT ROR CMD PID TOUCH QUEUE WEATHER DIAG");
   WebSerial.println("Log: LOG;DIAG;ON = heap + WS-rate diagnostics (off by default)");
   WebSerial.println("Weather: WEATHER / WEATHER;NOW  |  Help: HELP or ?");
   return true;
@@ -204,7 +204,7 @@ void setup() {
   // ET/BT probes (MAX31865) share the SPI bus touchInit() just brought up --
   // must come after it. No-op on non-S3 builds.
   etSensorInit();
-  bt2SensorInit();
+  btSensorInit();
   // Push the persisted ET/BT smoothing (median window + EMA) onto the probes,
   // overriding their constructor defaults, before the Smoothing screen is built.
   tempSmoothingApply();
@@ -256,13 +256,13 @@ void setup() {
 StateRequestT _currentState = {0};
 void webSocketLoop() {
   handleREAD();
-  StateDataT data = {bt2Report(), etReport(), temp, _currentState};
+  StateDataT data = {btReport(), etReport(), temp, _currentState};
   StateRequestT req = socketTick(data);
 }
 
 void bleLoop() {
 
-  StateDataT data = {bt2Report(), etReport(), temp, _currentState};
+  StateDataT data = {btReport(), etReport(), temp, _currentState};
   StateRequestT req = bleTick(data);
 }
 
@@ -285,7 +285,7 @@ void handleSerialCommand(String command) {
     // can't omit fields); NTC/ET/BT are always live.
     WeatherData amb = weatherGet();
     String readMsg = String(amb.tempC, 1) + "," + String(etReport(), 1) + "," +
-                     String(bt2Report(), 1) + "," + String(temp, 1) + "," +
+                     String(btReport(), 1) + "," + String(temp, 1) + "," +
                      String(amb.tempC, 1) + "," + String(amb.pressureHpa, 1) + "," +
                      String(amb.humidity, 1) + "\r\n";
     Serial.println(readMsg);
@@ -363,7 +363,7 @@ void displayLoop(void *params) {
     // SPI bus single-threaded without a lock. Both self rate-limited to their
     // own sampling interval, so this is cheap on most iterations.
     etSensorTick();
-    bt2SensorTick();
+    btSensorTick();
     delay(5);
   }
   vTaskDelete(NULL);

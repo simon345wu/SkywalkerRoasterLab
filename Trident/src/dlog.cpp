@@ -12,7 +12,7 @@ static bool sinkReady = false;
 void logSetSinkReady(bool ready) { sinkReady = ready; }
 
 static const char *kCategoryNames[LOG_CATEGORY_COUNT] = {
-    "SYS", "WIFI", "BLE",  "WS",  "ROASTER", "ET",      "BT2",
+    "SYS", "WIFI", "BLE",  "WS",  "ROASTER", "ET",      "BT",
     "ROR", "CMD",  "PID",  "TOUCH", "QUEUE", "WEATHER", "DIAG",
 };
 
@@ -21,7 +21,7 @@ void logInit() {
   // High-frequency, per-sample categories start quiet.
   categoryEnabled[LOG_ROASTER] = false;
   categoryEnabled[LOG_ET] = false;
-  categoryEnabled[LOG_BT2] = false;
+  categoryEnabled[LOG_BT] = false;
   categoryEnabled[LOG_ROR] = false;
   // On-demand diagnostics off by default -- turn on with "LOG;DIAG;ON".
   categoryEnabled[LOG_DIAG] = false;

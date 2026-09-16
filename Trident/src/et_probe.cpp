@@ -1,11 +1,11 @@
-#include "et_sensor.h"
+#include "et_probe.h"
 
 double etTemp = 0.0;
 double etRor = 0.0;
 
 #if defined(S3)
 
-#include "bt2_sensor.h" // fallback chain: ET -> BT -> NTC
+#include "bt_probe.h" // fallback chain: ET -> BT -> NTC
 #include "max31865.h"
 #include "pindef.h"
 
@@ -33,7 +33,7 @@ void etSensorTick() {
 
 bool etSensorHealthy() { return etProbe.healthy(); }
 
-double etReport() { return etProbe.healthy() ? etTemp : bt2Report(); }
+double etReport() { return etProbe.healthy() ? etTemp : btReport(); }
 
 void etSetFilter(int filtPercent) { etProbe.setFilter(filtPercent); }
 

@@ -20,6 +20,6 @@ void tempSmoothingSetMedian(int window);
 void tempSmoothingSetEmaX100(int emaX100);
 
 // Load persisted values from NVS and push them to ET + BT. Call once at boot,
-// after etSensorInit()/bt2SensorInit() and before the Smoothing screen is built
+// after etSensorInit()/btSensorInit() and before the Smoothing screen is built
 // (so its buttons show the right current values).
 void tempSmoothingApply();

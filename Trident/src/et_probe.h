@@ -8,8 +8,8 @@
 //
 // Reported to Artisan in the TC4 READ reply's ET field and shown on the
 // dashboard's ET / ET RoR tiles. When no probe is fitted or it faults, the
-// ET field falls back to mirroring BT (bt2_sensor.h's bt2Report(), which
-// itself falls back to NTC -- see bt2_sensor.h).
+// ET field falls back to mirroring BT (bt_probe.h's btReport(), which
+// itself falls back to NTC -- see bt_probe.h).
 
 extern double etTemp; // last good ET reading, in the current display unit (C/F)
 extern double etRor;  // ET rate-of-rise, deg/min (same algorithm as BT/NTC)

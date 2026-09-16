@@ -1,6 +1,6 @@
 #include "temp_smoothing.h"
-#include "bt2_sensor.h"
-#include "et_sensor.h"
+#include "bt_probe.h"
+#include "et_probe.h"
 #include <Preferences.h>
 
 static const char *kNamespace = "tsmooth";
@@ -30,21 +30,21 @@ void tempSmoothingApply() {
   prefs.end();
 
   etSetMedianWindow(s_median);
-  bt2SetMedianWindow(s_median);
+  btSetMedianWindow(s_median);
   etSetFilter(s_emaX100);   // FILT convention is EMA weight * 100
-  bt2SetFilter(s_emaX100);
+  btSetFilter(s_emaX100);
 }
 
 void tempSmoothingSetMedian(int window) {
   s_median = window;
   save();
   etSetMedianWindow(window);
-  bt2SetMedianWindow(window);
+  btSetMedianWindow(window);
 }
 
 void tempSmoothingSetEmaX100(int emaX100) {
   s_emaX100 = emaX100;
   save();
   etSetFilter(emaX100);
-  bt2SetFilter(emaX100);
+  btSetFilter(emaX100);
 }

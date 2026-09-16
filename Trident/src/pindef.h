@@ -24,6 +24,6 @@ const int RGB_PIN = 8;
 // physically next to the touch MISO/CLK pins on the header. S3 board only.
 #if defined(S3)
 const int ET_CS_PIN = 40;  // ET probe (PT100)
-const int BT2_CS_PIN = 39; // BT probe (PT1000)
+const int BT_CS_PIN = 39; // BT probe (PT1000)
 #endif
 #endif

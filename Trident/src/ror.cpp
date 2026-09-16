@@ -74,7 +74,7 @@ double RorTracker::update(double newTemp) {
   double leftAvg = leftN > 0 ? leftSum / leftN : _hist[anchorIdx].temp;
 
   _ror = (newTemp - leftAvg) / timedSec * 60.0;
-  // Shared by both BT (btRor, ~114ms) and ET (etRorTracker, ~125ms), so once
+  // Shared by both BT (ntcRor, ~114ms) and ET (etRorTracker, ~125ms), so once
   // each has 20s of history this fires ~17 times/sec combined -- LOG_ROR
   // defaults OFF (see dlog.cpp); "LOG;ROR;ON" from the WebSerial console to
   // watch it.

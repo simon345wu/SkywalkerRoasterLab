@@ -7,14 +7,14 @@
 // Shared MAX31865 RTD-to-digital driver -- register-level I/O (not the
 // Adafruit library; see max31865.cpp for why), Callendar-Van Dusen
 // conversion, and two-stage smoothing (median spike-guard + EMA). Extracted
-// from et_sensor.cpp when a second probe (bt2_sensor.cpp) was added, so both
+// from et_probe.cpp when a second probe (bt_probe.cpp) was added, so both
 // run the identical logic from separate instances instead of a hand-copied
 // second copy that could drift -- same reasoning as ror.h's RorTracker.
 //
 // Each instance owns one chip-select pin and assumes the SPI bus it's wired
 // to has already been begun elsewhere (see touchInit()). tick() must be
 // called from whichever single task also drives that bus -- there's no
-// locking here, by design (see et_sensor.h's original comment for why that's
+// locking here, by design (see et_probe.h's original comment for why that's
 // safe on this board).
 class Max31865Probe {
 public:

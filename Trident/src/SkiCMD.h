@@ -1,6 +1,6 @@
-#include "bt2_sensor.h"
+#include "bt_probe.h"
 #include "dlog.h"
-#include "et_sensor.h"
+#include "et_probe.h"
 #include <Arduino.h>
 // -----------------------------------------------------------------------------
 // External variables
@@ -85,9 +85,9 @@ void handleOT1(uint8_t value) {
 void handleREAD() {
   // ambient, ET, BT, heater, fan. ET = external MAX31865 #1 probe
   // (etReport() mirrors BT when there's no probe / it faulted); BT = external
-  // MAX31865 #2 probe (bt2Report() mirrors NTC, the roaster's own probe, when
+  // MAX31865 #2 probe (btReport() mirrors NTC, the roaster's own probe, when
   // there's no probe / it faulted).
-  String readMsg = "0," + String(etReport(), 1) + "," + String(bt2Report(), 1) + "," +
+  String readMsg = "0," + String(etReport(), 1) + "," + String(btReport(), 1) + "," +
                    String(sendBuffer[HEAT_BYTE]) + "," +
                    String(sendBuffer[VENT_BYTE]) + "\r\n";
 
@@ -158,11 +158,11 @@ void eStop() {
 // adjusting the heating power based on PID temperature control
 void handlePIDControl() {
   if (myPID.GetMode() == AUTOMATIC) {
-    // BT (bt2Report(), the external MAX31865/PT1000 probe) drives PID control
+    // BT (btReport(), the external MAX31865/PT1000 probe) drives PID control
     // -- falls back to NTC (the roaster's own probe) automatically if that
     // probe is absent/faulted, so a lost wire can't freeze or feed garbage
     // into the control loop.
-    pInput = bt2Report();
+    pInput = btReport();
     myPID.Compute();
     int roundedHeat = std::round(pOutput / 5.0) * 5;
     handleHEAT(roundedHeat);
@@ -283,8 +283,8 @@ void parseAndExecuteCommands(String input) {
     // Artisan TC4 FILT;f1;f2;f3;f4 -- per-physical-channel digital filter
     // level, 0-100. ET is physical channel 1 (skywalker.aset
     // arduinoETChannel=1) and BT is channel 2 (arduinoBTChannel=2), so the
-    // first value drives the ET EMA (et_sensor.cpp) and the second drives
-    // the BT EMA (bt2_sensor.cpp). NTC's filtering is fixed (median-7 in
+    // first value drives the ET EMA (et_probe.cpp) and the second drives
+    // the BT EMA (bt_probe.cpp). NTC's filtering is fixed (median-7 in
     // filtTemp()) and the aux channels are unused, so the rest are ignored.
     // "FILT" != the "FILTER" (filter-fan) command above.
     String etFilt = subcommand.length() > 0 ? subcommand : param;
@@ -296,7 +296,7 @@ void parseAndExecuteCommands(String input) {
       int nextSplit = param.indexOf(';');
       String btFilt = nextSplit >= 0 ? param.substring(0, nextSplit) : param;
       D_println(LOG_CMD, "Setting BT FILT: " + btFilt);
-      bt2SetFilter(btFilt.toInt());
+      btSetFilter(btFilt.toInt());
     }
   } else if (command == "COOL") {
     D_println(LOG_CMD, "Setting Cool: " + param);

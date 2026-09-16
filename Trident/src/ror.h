@@ -5,7 +5,7 @@
 // Implements Artisan's own default ROR algorithm; see ror.cpp for the full
 // rationale. Previously this lived as a set of file-scope globals + updateROR()
 // in SkiComms.h and only served BT; pulled out into a class here so the ET
-// channel (et_sensor.cpp) gets the identical calculation instead of a
+// channel (et_probe.cpp) gets the identical calculation instead of a
 // hand-copied second version that could drift.
 class RorTracker {
 public:
