@@ -51,7 +51,7 @@ private:
 
   SPISettings _spiSettings;
   RorTracker _rorTracker;
-  MedianFilter<double> _filter; // stage 1: kills a single corrupted SPI read
+  MedianFilter<double> _filter; // stage 1: median-7, rejects bursts of bad SPI reads
 
   // Stage 2: EMA -- ema = prevWeight*ema + (1-prevWeight)*medianOut.
   float _emaPrevWeight = 0.70f;
@@ -61,6 +61,8 @@ private:
   bool _inited = false;
   bool _healthy = false;
   unsigned long _lastSampleMs = 0;
+  unsigned long _lastArmMs = 0; // periodic re-arm of continuous mode (self-heal)
+  int _badCount = 0;            // consecutive out-of-range reads (for EMA re-seed)
   uint8_t _cfg = 0;
   double _temp = 0.0;
   double _ror = 0.0;

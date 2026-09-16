@@ -60,7 +60,7 @@ Max31865Probe::Max31865Probe(int csPin, float rref, float rnominal,
     : _csPin(csPin), _rref(rref), _rnominal(rnominal),
       _wireCfgBit(threeWire ? CFG_3WIRE : 0), _logCat(logCat), _tag(tag),
       _sampleIntervalMs(sampleIntervalMs),
-      _spiSettings(1000000, MSBFIRST, SPI_MODE1), _filter(3) {}
+      _spiSettings(1000000, MSBFIRST, SPI_MODE1), _filter(7) {}
 
 // --- Raw register I/O -----------------------------------------------------
 // Deliberately not using Adafruit_MAX31865's own read path: its readRTD()
@@ -129,36 +129,49 @@ void Max31865Probe::tick(char corF) {
   }
   _lastSampleMs = now;
 
-  uint16_t raw = readReg16(REG_RTD_MSB);
-  bool faultFlagged = raw & 0x0001;
-  uint16_t rtd = raw >> 1; // drop D0 (fault flag) -> 15-bit ratio
-
-  if (faultFlagged) {
-    uint8_t fault = readReg8(REG_FAULTSTAT);
+  // Periodic re-arm (~5s): re-assert VBIAS + continuous auto-convert and clear
+  // any latched fault. This self-heals a brownout/glitch WITHOUT touching the
+  // fault on every sample. The old per-sample path cleared the fault (which
+  // disturbs the very next continuous conversion) AND re-seeded the EMA (so the
+  // next good value snapped instead of being smoothed) -- together those were
+  // the source of the occasional spikes. The spike-free reference build
+  // (TEST_SkyCommand_Node32s) likewise ignores the per-sample fault bit and
+  // just re-arms periodically.
+  if (now - _lastArmMs >= 5000) {
+    _lastArmMs = now;
+    writeReg8(REG_CONFIG, _cfg);
     writeReg8(REG_CONFIG, _cfg | CFG_FAULTCLEAR);
-    _healthy = false;
-    _emaSeeded = false; // re-seed on recovery so it snaps, not crawls
-    D_printf(_logCat, "%s MAX31865 fault 0x%02X\n", _tag, fault);
-    return;
   }
 
+  // Continuous mode: the RTD register is always the latest conversion. Drop D0
+  // (the fault flag) positionally and use the value directly -- do NOT branch on
+  // the fault bit per sample. A genuinely bad reading is caught by the range
+  // guard below instead.
+  uint16_t rtd = readReg16(REG_RTD_MSB) >> 1;
   double c = cvdTemperature(rtd, _rnominal, _rref);
   double v = (corF == 'F') ? (c * 1.8 + 32.0) : c;
 
-  // Reject blatantly bogus values (open probe, corrupted read) before the
-  // filter / RoR / Artisan see them.
+  // Range guard for a genuinely open/shorted probe (extreme value). Skip the
+  // sample but KEEP the EMA state, so a single transient bad read never snaps
+  // the smoothed output. Only after a *sustained* run of bad reads (>=3) do we
+  // let the EMA re-seed, so a real probe recovery snaps rather than crawls.
   double maxV = (corF == 'F') ? 1100.0 : 600.0;
   if (v < -50.0 || v > maxV) {
     _healthy = false;
-    _emaSeeded = false;
-    D_printf(_logCat, "%s out-of-range reading ignored: %.1f\n", _tag, v);
+    if (++_badCount >= 3) {
+      _emaSeeded = false;
+    }
+    D_printf(_logCat, "%s out-of-range reading skipped: %.1f\n", _tag, v);
     return;
   }
+  _badCount = 0;
 
-  // Stage 1: short median -> kills a single corrupted SPI read. Must use
-  // AddValue()'s return, NOT GetFiltered(): MedianFilterLib's window-3 fast
-  // path (addValue3) never updates the field GetFiltered() reads, so it would
-  // always return 0 here.
+  // Stage 1: median-7 -> rejects short bursts (up to 3 of 7) of corrupted SPI
+  // reads before the EMA. AddValue() returns the freshly computed median, so
+  // read that directly. (For window 3 GetFiltered() would be stale -- its fast
+  // path addValue3 skips updating _lastFiltered; the window-!=3 path used here
+  // does update it, but reading AddValue()'s return keeps this independent of
+  // the window size.)
   double m = _filter.AddValue(v);
 
   // Stage 2: EMA -> the actual noise damping, level set by setFilter().
